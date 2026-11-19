@@ -1,0 +1,58 @@
+{
+  "name": "rakuten-combine-batch-standalone",
+  "productName": "Rakuten Combine Batch",
+  "version": "2.0.4",
+  "private": true,
+  "description": "Rakuten Combine Batch Standalone: Existing Brand Excel/iframe; New Brand independent JPEG + HTML, optional Photoshop export, folder memory and original BrandForge Combine layout.",
+  "main": "src/main.js",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/core/newBrandFolders.js && node --check src/core/batch.js && node --check src/core/outputNaming.js && node --check src/core/existingBrand.js && node --check src/core/excel.js && node --check src/core/iframeHtml.js && node --check src/core/iframeJpegRenderer.js && node --check src/core/directJpegRenderer.js && node --check src/core/imageDownload.js && node --check src/manual/assets.js && node --check src/manual/planner.js && node --check src/manual/captionLayout.js && node --check src/manual/photoshopCom.js && node --check src/manual/bridge.js && node --check src/manual/photoshop.js && node --check src/manual/publish.js && node --check src/manual/jpegParts.js && node --check src/manual/directOutput.js && node --check src/manual/webPublish.js && node --check src/manual/service.js && node --check src/renderer/app.js && node --check src/renderer/newbrand.js",
+    "test": "node --test test/*.test.js",
+    "validate": "npm run check && npm test",
+    "build:portable": "electron-builder --win portable --x64",
+    "dist:portable": "npm run build:portable"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "sharp": "^0.34.3",
+    "tesseract.js": "^6.0.1"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.gulliver.rakutencombinebatch",
+    "productName": "Rakuten Combine Batch",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "src/ocr-data/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/sharp/**/*",
+      "node_modules/@img/**/*",
+      "node_modules/tesseract.js/**/*",
+      "node_modules/tesseract.js-core/**/*",
+      "src/ocr-data/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Rakuten_Combine_Batch_${version}_Portable.exe"
+    }
+  }
+}

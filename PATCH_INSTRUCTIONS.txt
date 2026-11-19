@@ -1,0 +1,19 @@
+Rakuten Combine Batch v1.1.0 patch (from v1.0.0)
+
+1. BACK UP your existing v1.0.0 project folder.
+2. Extract the contents of this PATCH ZIP into that project folder,
+   keeping the existing folder's other files and confirming replacement.
+   Example: src/core/iframeSingle.js must overwrite the old file.
+3. In VS Code / command prompt at the project root, run:
+       npm install
+       npm run validate
+       npm run build:portable
+4. Fully exit the old portable .exe and open the new v1.1.0 .exe from dist.
+   Rebuilding is essential: the old .exe will not contain this fix.
+
+Fix: Excel Single may be a public image URL without a .jpg extension
+(e.g. https://item-shopping.c.yimg.jp/i/n/glv_abu-90). A public Single
+is now placed in BOTH the 780px HTML and the 600px JPEG at the top.
+No changes are made to BrandForge.
+
+For a clean setup, use the full project ZIP instead of this patch.

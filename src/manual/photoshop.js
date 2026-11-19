@@ -1,0 +1,136 @@
+"use strict";
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const sharp = require("sharp");
+const { runPhotoshopJSX } = require("./bridge");
+const { visibleBounds, PHOTOSHOP } = require("./assets");
+const { fitInside } = require("./planner");
+const { planJPEGParts } = require("./jpegParts");
+
+function scriptString(value) { return JSON.stringify(String(value).replace(/\\/g, "/")); }
+async function rasterizePsdSources(files, folder) {
+    const unique = [...new Set(files.filter(file => PHOTOSHOP.has(path.extname(file).toLowerCase())))];
+    const map = new Map();
+    if (!unique.length) return map;
+    if (process.platform !== "win32") throw new Error("PSD/PSB input preview requires Photoshop on Windows.");
+    const inputs = unique.map((input, index) => ({
+        input: input.replace(/\\/g, "/"),
+        output: path.join(folder, `psd_preview_${index}.png`).replace(/\\/g, "/")
+    }));
+    const jsx = await fs.promises.readFile(path.join(__dirname, "jsx/previewPsd.jsx"), "utf8");
+    await runPhotoshopJSX(`var COMBINE_PREVIEWS = ${JSON.stringify(inputs)};\n` +
+        jsx.replace(/^\s*#target\s+photoshop[^\n]*\n?/i, ""), "Combine PSD source previews", Math.min(1200000, 180000 + unique.length * 30000));
+    for (let i = 0; i < unique.length; i++) {
+        await fs.promises.access(inputs[i].output, fs.constants.R_OK);
+        map.set(unique[i].toLowerCase(), inputs[i].output);
+    }
+    return map;
+}
+
+async function preparedEntry(entry, index, folder, psdPreviewMap) {
+    const source = psdPreviewMap.get(entry.path.toLowerCase()) || entry.path;
+    // Unlike ordinary variations, vertical Line Up captions live BETWEEN
+    // and BELOW products within the original source canvas. Trimming the
+    // white areas would destroy their recorded Y positions and spacing.
+    const bounds = entry.preserveCanvas ? { left:0, top:0,
+        width:Number(entry.width), height:Number(entry.height), mode:"full" }
+        : await visibleBounds(source);
+    const fitted = fitInside({ ...entry, visibleWidth: bounds.width, visibleHeight: bounds.height },
+        entry.slotX, entry.slotY, entry.slotWidth, entry.slotHeight);
+    const output = path.join(folder, `placed_${String(index).padStart(3, "0")}.png`);
+    // Always scale UNIFORMLY. Fit inside the slot with no upscaling:
+    // low-resolution sources retain their original visible pixel dimensions.
+    await sharp(source, { animated: false, failOn: "error", limitInputPixels: 400000000 })
+        .rotate().extract({ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height })
+        .resize({ width: fitted.placedWidth, height: fitted.placedHeight,
+            fit: "inside", withoutEnlargement: true, kernel: sharp.kernel.lanczos3 })
+        .png({ compressionLevel: 6 }).toFile(output);
+    const resultSize = await sharp(output).metadata();
+    const placedWidth = resultSize.width, placedHeight = resultSize.height;
+    const placed = { ...fitted, placedWidth, placedHeight,
+        x: fitted.slotX + Math.floor((fitted.slotWidth - placedWidth) / 2),
+        y: fitted.slotY + (fitted.verticalAlign === "bottom"
+            ? fitted.slotHeight - placedHeight
+            : Math.floor((fitted.slotHeight - placedHeight) / 2)),
+        input: output.replace(/\\/g, "/"),
+        originalPsd: entry.isPhotoshop ? entry.path.replace(/\\/g, "/") : null,
+        visibleMode: bounds.mode };
+    if (entry.rowMode === "vertical" && Array.isArray(entry.labels)) {
+        const captionWidth = Math.max(1, placedWidth - 12);
+        placed.labels = entry.labels.map(label => ({ ...label,
+            x: placed.x + Math.max(0, Math.round((placedWidth - captionWidth) / 2)),
+            y: placed.y + Math.round(placedHeight * label.positionRatio),
+            width: captionWidth }));
+    }
+    return placed;
+}
+
+async function prepareCombineLayers(layout, folder, progress = () => {}) {
+    const ordered = [...(layout.single ? [layout.single] : []), ...layout.lineup, ...layout.details];
+    progress({ stage: "preparing", message: "Preparing source images and visible content bounds..." });
+    const previews = await rasterizePsdSources(ordered.map(item => item.path), folder);
+    const all = [];
+    for (let i = 0; i < ordered.length; i++) {
+        all.push(await preparedEntry(ordered[i], i, folder, previews));
+        progress({ stage: "preparing", completed: i + 1, total: ordered.length,
+            message: `Fitted ${i + 1}/${ordered.length} images without product cropping` });
+    }
+    const offset = layout.single ? 1 : 0;
+    return {
+        layout,
+        job: {
+            width: layout.width, height: layout.height, format: layout.format,
+            name: layout.name, single: layout.single ? all[0] : null,
+            lineup: all.slice(offset, offset + layout.lineup.length),
+            details: all.slice(offset + layout.lineup.length),
+            detailsHeader: layout.detailsHeader,
+            geometry: layout.geometry
+        },
+        jpegParts: planJPEGParts(layout.height, folder)
+    };
+}
+
+async function createPhotoshopFromPrepared(prepared, folder, progress = () => {}) {
+    if (process.platform !== "win32") throw new Error("Editable PSD/PSB export requires Photoshop on Windows.");
+    const layout = prepared.layout;
+    const docFile = path.join(folder, `result.${layout.format}`);
+    const job = {...prepared.job, jpegParts: planJPEGParts(layout.height, folder)};
+    const jsx = await fs.promises.readFile(path.join(__dirname, "jsx/compose.jsx"), "utf8");
+    const code = `var COMBINE_JOB = ${JSON.stringify(job)};\nvar COMBINE_DEST = ${scriptString(docFile)};\n` +
+        jsx.replace(/^\s*#target\s+photoshop[^\n]*\n?/i, "");
+    progress({stage: "photoshop", message: `Photoshop: creating layered ${layout.format.toUpperCase()} (JPEG/HTML are already saved)...`});
+    await runPhotoshopJSX(code, "Rakuten New Brand Photoshop export", Math.min(900000, 90000 + (job.lineup.length + job.details.length + Number(Boolean(job.single))) * 25000));
+    const doc = await fs.promises.stat(docFile);
+    if (!doc.isFile() || doc.size < 1000) throw new Error("Photoshop did not write a layered PSD/PSB.");
+    return {psdPath:docFile, jpegParts:job.jpegParts};
+}
+
+async function createCombineFiles(layout, folder, progress = () => {}) {
+    const prepared = await prepareCombineLayers(layout, folder, progress);
+    const built = await createPhotoshopFromPrepared(prepared, folder, progress);
+    for (const jpg of built.jpegParts) {
+        const meta = await sharp(jpg.path, {limitInputPixels:400000000}).metadata();
+        if (meta.format !== "jpeg" || meta.width !== layout.width || meta.height !== jpg.height)
+            throw new Error(`Invalid Combine JPEG ${path.basename(jpg.path)}.`);
+    }
+    return built;
+}
+
+async function previewImage(entry, maxEdge = 800, { preserveCanvas = false } = {}) {
+    const limit = Math.max(180, Math.min(1400, Number(maxEdge) || 800));
+    const folder = await fs.promises.mkdtemp(path.join(os.tmpdir(), "brandforge-combine-preview-"));
+    try {
+        const map = await rasterizePsdSources([entry.path], folder);
+        const file = map.get(entry.path.toLowerCase()) || entry.path;
+        const bbox = preserveCanvas ? {left:0,top:0,width:entry.width,height:entry.height} : await visibleBounds(file);
+        const png = await sharp(file, { animated: false, limitInputPixels: 400000000 }).rotate()
+            .extract({ left: bbox.left, top: bbox.top, width: bbox.width, height: bbox.height })
+            .resize({ width: limit, height: limit, fit: "inside", withoutEnlargement: true })
+            .png().toBuffer();
+        return `data:image/png;base64,${png.toString("base64")}`;
+    } finally { await fs.promises.rm(folder, { recursive: true, force: true }).catch(() => {}); }
+}
+
+module.exports = { createCombineFiles, prepareCombineLayers, createPhotoshopFromPrepared, previewImage, rasterizePsdSources, preparedEntry };

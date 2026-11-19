@@ -1,0 +1,241 @@
+"use strict";
+
+const path = require("path");
+const { verticalPositions } = require("./captionLayout");
+
+// Geometry measured from !COMBINE_TEMPLATE.psd (600 x 1998).
+// Only the original Detail boxes are fixed by the template. Line Up spacing
+// is the agreed two-column extension of the same 293 px grid.
+const DIM = Object.freeze({
+    width: 600, single: 600, singleGap: 15,
+    margin: 3, cell: 293, columnGap: 8, rowGap: 7,
+    dualWidth: 594, dualMaxHeight: 1600, lineupPortraitMaxHeight: 594,
+    labelGap: 6, labelSize: 28, labelLine: 36,
+    detailsGap: 30, detailsHeadingSize: 28,
+    detailsHeadingHeight: 36, detailsHeadingGap: 16,
+    maxPsdHeight: 30000, maxHeight: 300000,
+    maxParts: 250
+});
+
+function nameFromPath(p) { return path.parse(String(p || "")).name; }
+function safeOutputName(value) {
+    const stem = String(value || "").trim().replace(/\.(?:psd|psb|jpe?g)$/i, "");
+    if (!stem || stem.length > 120 || stem.startsWith(".") || /[. ]$/.test(stem) ||
+        /[<>:"/\\|?*\x00-\x1f]/.test(stem) ||
+        /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(stem)) {
+        throw new Error("Enter a valid output filename (1-120 characters; no paths or Windows-reserved names).");
+    }
+    return stem;
+}
+
+function textUnits(ch) {
+    if (/[\u2e80-\uffff]/.test(ch)) return 1;
+    if (/[il1.,'\s]/.test(ch)) return 0.28;
+    if (/[mwMW@]/.test(ch)) return 0.9;
+    return 0.55;
+}
+function wrapColorName(raw, maxUnits = 10.0) {
+    const text = String(raw || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!text) return [];
+    if (text.length > 120) throw new Error("Color names are limited to 120 characters.");
+    const words = text.match(/\S+\s*/g) || [text];
+    const lines = [];
+    let line = "";
+    const measure = s => Array.from(s).reduce((n, c) => n + textUnits(c), 0);
+    for (const word of words) {
+        const value = word.trim();
+        if (line && measure(`${line} ${value}`) > maxUnits) {
+            lines.push(line);
+            line = "";
+        }
+        if (measure(value) > maxUnits) {
+            for (const ch of Array.from(value)) {
+                if (line && measure(line + ch) > maxUnits) { lines.push(line); line = ""; }
+                line += ch;
+            }
+        } else {
+            line = line ? `${line} ${value}` : value;
+        }
+    }
+    if (line) lines.push(line);
+    if (lines.length > 5) throw new Error(`Color name "${text}" needs more than five lines. Shorten it.`);
+    return lines;
+}
+function fitInside(entry, x, y, slotWidth, slotHeight) {
+    const w = Number(entry.visibleWidth || entry.width);
+    const h = Number(entry.visibleHeight || entry.height);
+    if (!(w > 0 && h > 0)) throw new Error(`Invalid dimensions: ${entry.name}`);
+    const scale = Math.min(1, slotWidth / w, slotHeight / h);
+    const width = Math.max(1, Math.min(slotWidth, Math.round(w * scale)));
+    const height = Math.max(1, Math.min(slotHeight, Math.round(h * scale)));
+    const offsetY = entry.verticalAlign === "bottom" ? slotHeight - height : Math.floor((slotHeight - height) / 2);
+    return { ...entry, slotX: x, slotY: y, slotWidth, slotHeight, x: x + Math.floor((slotWidth - width) / 2),
+        y: y + offsetY, placedWidth: width, placedHeight: height };
+}
+function buildCombineLayout({ single, lineup, details, outputName }) {
+    if (single != null && (typeof single !== "object" || Array.isArray(single))) throw new Error("Invalid Single image.");
+    if (!Array.isArray(lineup) || !Array.isArray(details)) throw new Error("Line Up and Details must be ordered lists.");
+    if (!single && !lineup.length && !details.length) throw new Error("Add at least one image to Single, Line Up, or Details.");
+    if (lineup.length + details.length > DIM.maxParts) throw new Error(`Maximum ${DIM.maxParts} Line Up and Detail images per Combine.`);
+    const name = safeOutputName(outputName);
+    const placedSingle = single ? fitInside(single, 0, 0, DIM.single, DIM.single) : null;
+    // Only reserve the 600 px Single area and 15 px separation when supplied.
+    // Without Single, Line Up or Details starts at the top of the canvas.
+    let y = placedSingle ? DIM.single + ((lineup.length || details.length) ? DIM.singleGap : 0) : 0;
+    const lineupRows = [];
+    const placedLineup = [];
+    // Respect the exact source-image order. Regular one-item images share a
+    // two-column row; a two-item image takes one entire full-width row and
+    // creates TWO independent editable color-name text layers underneath it.
+    // Never split, crop, or duplicate a two-item image into separate slots.
+    let pending = [];
+    function appendNormalRow(items) {
+        if (!items.length) return;
+        const labels = items.map(({ item }) => wrapColorName(item.colorName));
+        // Each single-variant product keeps its 293px COLUMN width, but is
+        // NOT constrained to a 293px-square image box. Tall products such as
+        // coats can use the same vertical scale as the adjacent 594px-wide
+        // two-variant rows, without distortion, cropping, or extra whitespace.
+        // The actual visible bounds (not source white/alpha borders) determine
+        // the product height; the 28px text remains directly underneath.
+        const measured = items.map(({ item }) =>
+            fitInside(item, 0, 0, DIM.cell, DIM.lineupPortraitMaxHeight));
+        const imageHeight = Math.max(...measured.map(item => item.placedHeight));
+        const labelHeight = Math.max(...labels.map(lines => lines.length)) * DIM.labelLine;
+        const captionGap = labelHeight ? DIM.labelGap : 0;
+        const labelTop = y + imageHeight + captionGap;
+        const row = { kind: "regular", top: y, imageHeight, labelTop,
+            labelHeight, rowHeight: imageHeight + captionGap + labelHeight,
+            imageIndices: items.map(({ index }) => index) };
+        items.forEach(({ item, index }, column) => {
+            const x = DIM.margin + column * (DIM.cell + DIM.columnGap);
+            const lines = labels[column];
+            const label = { side: "single", text: item.colorName, lines,
+                x, y: labelTop, width: DIM.cell, height: labelHeight };
+            placedLineup.push({ ...fitInside({ ...item, verticalAlign: "bottom" }, x, y, DIM.cell, imageHeight), rowMode: "single",
+                colorName: item.colorName, labelLines: lines,
+                labelX: x, labelY: labelTop, labelWidth: DIM.cell, labelHeight,
+                labels: lines.length ? [label] : [], order: index + 1 });
+        });
+        lineupRows.push(row);
+        y += row.rowHeight + DIM.rowGap;
+    }
+    function appendDualRow(item, index) {
+        const left = wrapColorName(item.colorName);
+        const right = wrapColorName(item.colorNameRight);
+        const rawWidth = Number(item.visibleWidth || item.width);
+        const rawHeight = Number(item.visibleHeight || item.height);
+        if (!(rawWidth > 0 && rawHeight > 0)) throw new Error(`Invalid dimensions: ${item.name}`);
+        // Keep the complete source-image composition intact, with a row height
+        // derived from its aspect ratio. Fit-inside is uniform: never stretch.
+        // A dual-item image is one intact full-width row. Source white/alpha
+        // padding was excluded during import, so do not reserve a minimum
+        // blank row height after the products. Tall sources stay uncropped.
+        const imageHeight = Math.max(1, Math.min(DIM.dualMaxHeight,
+            Math.round(Math.min(1, DIM.dualWidth / rawWidth) * rawHeight)));
+        const labelHeight = Math.max(left.length, right.length) * DIM.labelLine;
+        const captionGap = labelHeight ? DIM.labelGap : 0;
+        const labelTop = y + imageHeight + captionGap;
+        const xRight = DIM.margin + DIM.cell + DIM.columnGap;
+        const labels = [
+            { side: "left", text: item.colorName, lines: left,
+                x: DIM.margin, y: labelTop, width: DIM.cell, height: labelHeight },
+            { side: "right", text: item.colorNameRight, lines: right,
+                x: xRight, y: labelTop, width: DIM.cell, height: labelHeight }
+        ];
+        const row = { kind: "dual", top: y, imageHeight, labelTop,
+            labelHeight, rowHeight: imageHeight + captionGap + labelHeight,
+            imageIndices: [index] };
+        placedLineup.push({ ...fitInside({ ...item, verticalAlign: "bottom" }, DIM.margin, y, DIM.dualWidth, imageHeight),
+            rowMode: "dual", colorName: item.colorName, colorNameRight: item.colorNameRight,
+            labelLines: left, labelX: DIM.margin, labelY: labelTop,
+            labelWidth: DIM.cell, labelHeight, labels: labels.filter(label=>label.lines.length), order: index + 1 });
+        lineupRows.push(row);
+        y += row.rowHeight + DIM.rowGap;
+    }
+    // A vertically stacked source image also occupies ONE full-width block,
+    // but its editable TOP and BOTTOM labels sit IN the original blank caption
+    // areas, not both appended after the second product. Preserve the entire
+    // source canvas so original text positions and image-to-caption gaps match.
+    function appendVerticalRow(item, index) {
+        const top = wrapColorName(item.colorName, 19.5);
+        const bottom = wrapColorName(item.colorNameRight, 19.5);
+        const positions = verticalPositions(item.captionTopY, item.captionBottomY);
+        const sourceWidth = Number(item.width), sourceHeight = Number(item.height);
+        if (!(sourceWidth > 0 && sourceHeight > 0)) throw new Error(`Invalid dimensions: ${item.name}`);
+        const imageHeight = Math.max(1, Math.min(DIM.dualMaxHeight,
+            Math.round(Math.min(1, DIM.dualWidth / sourceWidth) * sourceHeight)));
+        const image = fitInside({ ...item, visibleWidth: sourceWidth,
+            visibleHeight: sourceHeight, verticalAlign: "top" }, DIM.margin, y,
+            DIM.dualWidth, imageHeight);
+        const labelWidth = DIM.dualWidth - 12;
+        const labelX = DIM.margin + 6;
+        const topY = image.y + Math.round(image.placedHeight * positions.topY);
+        const bottomY = image.y + Math.round(image.placedHeight * positions.bottomY);
+        const topHeight = top.length * DIM.labelLine;
+        const bottomHeight = bottom.length * DIM.labelLine;
+        if (top.length && bottom.length && topY + topHeight + DIM.labelGap > bottomY) {
+            throw new Error(`TOP/BOTTOM names overlap in ${item.name}. Move their caption positions farther apart or shorten the names.`);
+        }
+        const labels = [
+            { side: "top", text: item.colorName, lines: top, x: labelX,
+                y: topY, width: labelWidth, height: topHeight, positionRatio: positions.topY },
+            { side: "bottom", text: item.colorNameRight, lines: bottom, x: labelX,
+                y: bottomY, width: labelWidth, height: bottomHeight, positionRatio: positions.bottomY }
+        ];
+        // If the printed bottom caption was very close to the source bottom,
+        // reserve only the pixels actually needed for its replacement text.
+        const rowHeight = Math.max(imageHeight, bottomY + bottomHeight - y + DIM.margin);
+        lineupRows.push({kind:"vertical", top:y, imageHeight, labelTop:topY,
+            labelHeight:bottomHeight, rowHeight, imageIndices:[index]});
+        placedLineup.push({ ...image, rowMode:"vertical", preserveCanvas:true,
+            captionTopY:positions.topY, captionBottomY:positions.bottomY,
+            colorName:item.colorName, colorNameRight:item.colorNameRight,
+            labels:labels.filter(label=>label.lines.length), labelLines:top, order:index+1 });
+        y += rowHeight + DIM.rowGap;
+    }
+    lineup.forEach((item, index) => {
+        const mode = item.rowMode == null ? "single" : item.rowMode;
+        if (!["single", "dual", "vertical"].includes(mode)) throw new Error(`Invalid Line Up row mode for ${item.name}.`);
+        if (mode === "dual" || mode === "vertical") {
+            appendNormalRow(pending); pending = [];
+            if (mode === "vertical") appendVerticalRow(item, index);
+            else appendDualRow(item, index);
+        } else {
+            pending.push({ item, index });
+            if (pending.length === 2) { appendNormalRow(pending); pending = []; }
+        }
+    });
+    appendNormalRow(pending);
+    // Empty last Line Up row is never emitted. Keep only the agreed 7 px
+    // between rows; after the final row the Details section sets its own gap.
+    if (lineupRows.length) y -= DIM.rowGap;
+    let detailsHeader = null;
+    const placedDetails = [];
+    if (details.length) {
+        if (lineup.length) y += DIM.detailsGap;
+        detailsHeader = { x: 8, y, fontSize: DIM.detailsHeadingSize,
+            height: DIM.detailsHeadingHeight, text: "DETAILS" };
+        y += DIM.detailsHeadingHeight + DIM.detailsHeadingGap;
+        for (let i = 0; i < details.length; i++) {
+            const row = Math.floor(i / 2);
+            const col = i % 2;
+            const x = DIM.margin + col * (DIM.cell + DIM.columnGap);
+            const top = y + row * (DIM.cell + DIM.rowGap);
+            placedDetails.push({ ...fitInside(details[i], x, top, DIM.cell, DIM.cell), order: i + 1 });
+        }
+        y += Math.ceil(details.length / 2) * DIM.cell + Math.max(0, Math.ceil(details.length / 2) - 1) * DIM.rowGap;
+        y += DIM.margin;
+    }
+    y = Math.ceil(y);
+    if (y > DIM.maxHeight) throw new Error(`Combine height ${y}px exceeds Photoshop's supported document height.`);
+    return {
+        width: DIM.width, height: y, format: y > DIM.maxPsdHeight ? "psb" : "psd", name,
+        single: placedSingle, lineup: placedLineup, details: placedDetails,
+        lineupRows, detailsHeader, geometry: DIM,
+        lineupRowCount: lineupRows.length,
+        sourceCount: (placedSingle ? 1 : 0) + placedLineup.length + placedDetails.length,
+        jpegCount: Math.ceil(y / 60000)
+    };
+}
+module.exports = { DIM, buildCombineLayout, fitInside, wrapColorName, safeOutputName };

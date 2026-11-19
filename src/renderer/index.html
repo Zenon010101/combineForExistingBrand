@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'">
+  <title>Rakuten Combine Batch</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar"><div class="mark">RC</div><div class="appname"><strong>RAKUTEN COMBINE</strong><span>STANDALONE BATCH GENERATOR</span></div><div class="version">v2.0.4</div></header>
+  <main>
+    <div class="headline"><div class="eyebrow">RAKUTEN COMBINE &middot; TWO PROCESSES</div><h1 id="modeTitle">Existing Brand</h1><p id="modeDescription">Batch import from Excel and Rakuten iframe. Every image follows source order; no Line Up / Details classification or size squeezing.</p></div>
+    <nav class="mode-tabs" aria-label="Combine process"><button class="mode-btn selected" id="tabExisting" aria-selected="true" type="button">Existing Brand <small>Excel / iframe &rarr; HTML + JPG</small></button><button class="mode-btn" id="tabNewBrand" aria-selected="false" type="button">New Brand <small>Manual upload &rarr; layered PSD + JPG</small></button></nav>
+    <div id="existingMode">
+    <section class="panel importPanel" aria-label="Import Excel">
+      <div class="panelHeader"><div><span class="step">01</span><h2>Select an Excel file</h2></div><span class="statusText" id="remembered">Last folder: not selected</span></div>
+      <div class="drop" id="dropZone" tabindex="0" role="button" aria-label="Choose or drop an XLSX workbook">
+        <div class="fileIcon">XLSX</div>
+        <div class="dropMain"><strong>Drop an .xlsx file here</strong><span>select a workbook, test 3 products, then run the full batch</span></div>
+        <button type="button" class="primary" id="browse">Choose Excel</button>
+      </div>
+      <div class="inputLine"><div class="inputLabel">Selected workbook</div><div id="selectedPath" class="path" title="Current Excel input">No file selected</div></div>
+      <div class="actions"><button class="primary" id="testThree" type="button" disabled>Test 3 products</button><button class="outline" id="runFull" type="button" disabled>Generate full batch</button><span class="statusText">Test uses first 3 valid iframe rows. JPEG errors stop a full run after 5 consecutive failures.</span></div>
+      <div class="hint"><span class="dot"></span><span>Auto-save: a new <strong>COMBINE_BATCH</strong> folder beside the uploaded Excel file. Original Excel stays unchanged.</span></div>
+    </section>
+    <section class="panel progressPanel" aria-label="Batch status">
+      <div class="panelHeader"><div><span class="step">02</span><h2>Batch progress</h2></div><div class="tools"><span class="statusText">Source order only &middot; exactly 2 columns after Single</span></div></div>
+      <div class="progressHead"><div class="stage" id="stage">Ready to receive Excel</div><div class="progressCount" id="progressCount">0 / 0</div></div>
+      <div class="meter" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="meter"><div class="meterFill" id="meterFill"></div></div>
+      <div class="stats">
+        <div><span class="statNum" id="statReady">0</span><span class="statLabel">Ready</span></div>
+        <div><span class="statNum" id="statReview">0</span><span class="statLabel">Review</span></div>
+        <div><span class="statNum" id="statFailed">0</span><span class="statLabel">Failed</span></div>
+        <div><span class="statNum" id="statJpeg">0</span><span class="statLabel">JPEGs</span></div>
+      </div>
+      <div class="actions"><button class="outline" id="stop" type="button" disabled>Stop after active rows</button><button class="outline" id="clear" type="button">Clear previous work</button><button class="primary" id="openFolder" type="button" disabled>Open output folder</button><button class="outline" id="openExcel" type="button" disabled>Open results Excel</button></div>
+      <pre id="log" class="log" aria-live="polite">No batch run yet.</pre>
+    </section>
+    <section class="rules">
+      <div><span class="label">INPUT</span><strong>Single URL / path + iframe</strong><p>Reads your real workbook directly: C = iframe, D = HTML output, E = Yahoo Single image URL. No moving columns. Source images are downloaded temporarily for direct JPEG composition, then discarded. Other supported templates are also scanned.</p></div>
+      <div><span class="label">HTML</span><strong>780px &middot; two-column table</strong><p>Single touches top and both sides; 15px below it, all iframe images follow source order in two fixed columns. Output: ID.html, from the end of the Yahoo Single URL.</p></div>
+      <div><span class="label">JPEG</span><strong>600px &middot; dynamic height</strong><p>Full-bleed Single, then two 293px columns. 8px / 7px gallery gaps, proportional fit, no generated DETAILS heading. Direct JPEG composition (no Chromium screenshot). Output: IDcombine.jpg.</p></div>
+    </section>
+    </div>
+    <section id="newBrandMode" hidden>
+      <div class="new-columns">
+        <div class="new-controls">
+          <section class="panel manual-panel">
+            <div class="panelHeader"><div><span class="step">01</span><h2>Single <small>Optional</small></h2></div><button class="outline" id="newAddSingle" type="button">Upload Single</button></div>
+            <div id="newSingleList" class="manual-list empty-list">No Single uploaded.</div>
+            <div class="new-drop" data-upload="single" tabindex="0">Drop a Single image here</div>
+          </section>
+          <section class="panel manual-panel">
+            <div class="panelHeader"><div><span class="step">02</span><h2>Line Up <small>28px Hiragino captions</small></h2></div><button class="outline" id="newAddLineup" type="button">Upload Line Up</button></div>
+            <p class="section-help">Select order is placement order. Two single variants per row. Horizontal or vertical two-item images remain one intact block. Color captions: Hiragino Kaku Gothic Pro 28px. Text is optional and editable; existing printed text is NOT removed. Uploads accept any readable image file, including PSD/PSB when Photoshop is available.</p>
+            <div id="newLineupList" class="manual-list empty-list">No Line Up images.</div>
+            <div class="new-drop" data-upload="lineup" tabindex="0">Drop multiple Line Up images here</div>
+          </section>
+          <section class="panel manual-panel">
+            <div class="panelHeader"><div><span class="step">03</span><h2>Details</h2></div><button class="outline" id="newAddDetails" type="button">Upload Details</button></div>
+            <div id="newDetailsList" class="manual-list empty-list">No Detail images.</div>
+            <div class="new-drop" data-upload="details" tabindex="0">Drop multiple Detail images here</div>
+          </section>
+        </div>
+        <aside class="new-preview-area">
+          <section class="panel">
+            <div class="panelHeader"><div><span class="step">QC</span><h2>Live composition</h2></div><span class="statusText" id="newSize">600px canvas</span></div>
+            <div class="new-preview-scroll" id="newPreviewScroll"><div class="new-preview-holder" id="newPreviewHolder"><div class="new-preview-canvas" id="newPreviewCanvas"></div></div></div>
+            <p class="section-help">Preview follows BrandForge geometry. JPEG + HTML export works independently of Photoshop. Optional Photoshop creates an editable PSD/PSB.</p>
+          </section>
+          <section class="panel">
+            <div class="panelHeader"><div><span class="step">04</span><h2>Generate</h2></div><span class="statusText">JPEG + HTML first; PSD optional</span></div>
+            <label class="new-label" for="newOutputName">Output filename</label><input id="newOutputName" class="new-input" type="text" value="COMBINE" placeholder="Product ID" maxlength="120" />
+            <div class="new-output-row"><button id="newChooseFolder" class="outline" type="button">Choose output folder</button><span id="newOutputFolder" class="new-path">No folder selected</span></div>
+            <label class="new-psd-option"><input id="newExportPsd" type="checkbox" /> Also export layered PSD/PSB (Photoshop required; JPEG + HTML saved first)</label>
+            <div class="new-output-row"><button id="newGenerate" class="primary" type="button">Generate JPEG + HTML</button><button id="newReset" class="outline" type="button">Clear images</button></div>
+            <div class="new-output-row"><button id="newOpenFolder" class="outline" type="button" disabled>Open output folder</button><button id="newOpenResult" class="outline" type="button" disabled>Open generated HTML</button></div>
+            <div class="new-output-row"><button id="newForgetFolders" class="outline" type="button">Clear folder memory</button></div>
+            <p id="newFolderMemory" class="section-help">Remembered Single / Line Up / Details / Output folders will appear here.</p>
+            <pre id="newLog" class="log" aria-live="polite">Ready for manual upload.</pre>
+          </section>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <footer id="modeFooter">Existing Brand: original source order, no image classification, always two image columns after Single. New rows start after each pair. New Brand: original BrandForge Combine geometry, without text removal.</footer>
+</div>
+<script src="app.js"></script>
+<script src="newbrand.js"></script>
+</body></html>
