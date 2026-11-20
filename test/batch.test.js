@@ -132,11 +132,13 @@ test("standalone batch auto-saves beside Excel and creates HTML + JPEG for every
         assert.equal(singles[0].value,"images/TNR-90.jpg");assert.equal(singles[0].source,excel);
         assert.deepEqual(captures.map(x=>x.expectedImages).sort((a,b)=>a-b),[13,14]);
         assert.equal(captures.filter(x=>x.renderHtml.includes('class="bf-single"')).length,1);
-        const files=await fs.promises.readdir(path.join(output.outputFolder,"HTML_FILES"));
-        assert.equal(files.length,2);
-        const html=await fs.promises.readFile(path.join(output.outputFolder,"HTML_FILES",files[0]),"utf8");
+        const files=await fs.promises.readdir(path.join(output.outputFolder,"PASSED","HTML_FILES"));
+        assert.equal(files.length,1,"local-only Single requires review because HTML cannot contain its PC path");
+        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"ERRORS","HTML_FILES"))).length,1);
+        const html=await fs.promises.readFile(path.join(output.outputFolder,"PASSED","HTML_FILES",files[0]),"utf8");
         assert.match(html,/class="eb-gallery-table"/);assert.match(html,/width:780px/);assert.doesNotMatch(html,/data:image\/jpeg;base64/);
-        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"JPEG_FILES"))).length,2);
+        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"PASSED","JPEG_FILES"))).length,1);
+        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"ERRORS","JPEG_FILES"))).length,1);
         assert.equal((await fs.promises.stat(output.resultsExcel)).isFile(),true);
         assert.equal(progress.at(-1).stage,"complete");
     }finally{await fs.promises.rm(temp,{recursive:true,force:true});}
@@ -167,8 +169,8 @@ test("1,000-row bulk run preserves row order and one HTML/JPEG pair per product 
         });
         const output=await service.generate(input,{});
         assert.equal(output.total,1000);assert.equal(output.ready,1000);assert.equal(output.jpegReady,1000);
-        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"HTML_FILES"))).length,1000);
-        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"JPEG_FILES"))).length,1000);
+        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"PASSED","HTML_FILES"))).length,1000);
+        assert.equal((await fs.promises.readdir(path.join(output.outputFolder,"PASSED","JPEG_FILES"))).length,1000);
         assert.equal(book.worksheets[0].getRow(1001).getCell(1).value,iframe("SKU-0999"));
         assert.match(book.worksheets[0].getRow(1001).getCell(2).value,/class="eb-gallery-table"/);
     }finally{await fs.promises.rm(temp,{recursive:true,force:true});}
@@ -252,14 +254,14 @@ test("end-to-end remote Single appears in HTML cell, exported HTML, and JPEG ren
         assert.ok(code.indexOf(yahooSingle)<code.indexOf("abu-90_1.jpg"));
         assert.equal(ws.getRow(2).getCell(4).value.text.endsWith(".html"),true);
         assert.equal(ws.getRow(2).getCell(5).value.text.endsWith(".jpg"),true);
-        const files=await fs.promises.readdir(path.join(result.outputFolder,"HTML_FILES"));
-        const html=await fs.promises.readFile(path.join(result.outputFolder,"HTML_FILES",files[0]),"utf8");
+        const files=await fs.promises.readdir(path.join(result.outputFolder,"PASSED","HTML_FILES"));
+        const html=await fs.promises.readFile(path.join(result.outputFolder,"PASSED","HTML_FILES",files[0]),"utf8");
         assert.ok(html.indexOf(yahooSingle)<html.indexOf("abu-90_1.jpg"));
         assert.match(html,/<img src="https:\/\/item-shopping.c.yimg.jp/);
     }finally {await fs.promises.rm(temp,{recursive:true,force:true});}
 });
 
-test("invalid Single source is flagged FAILED and cannot silently create a JPEG without Single",async()=>{
+test("invalid Single source is flagged REVIEW and valid details still generate a partial JPEG",async()=>{
     const temp=await fs.promises.mkdtemp(path.join(os.tmpdir(),"standalone-invalid-single-"));
     try {
         const excel=path.join(temp,"INVALID.xlsx");await fs.promises.writeFile(excel,"mock workbook");
@@ -271,15 +273,16 @@ test("invalid Single source is flagged FAILED and cannot silently create a JPEG 
         const service=new StandaloneBatch({
             excelFactory:()=>book,
             fetcher:async()=>({buffer:Buffer.from(srcPage("abu-90",5,2)),contentType:"text/html"}),
-            rendererFactory:()=>({capture:async()=>{captureCount++;},close:async()=>{}})
+            rendererFactory:()=>({capture:async(_html,jpeg)=>{captureCount++;await fs.promises.writeFile(jpeg,"JPEG without Single");},close:async()=>{}})
         });
         const result=await service.generate(excel,{});
-        assert.equal(result.failed,1);
-        assert.equal(result.review,0);
-        assert.equal(result.rows[0].jpegStatus,"FAILED");
-        assert.equal(result.jpegReady,0);
+        assert.equal(result.failed,0);
+        assert.equal(result.review,1);
+        assert.equal(result.rows[0].jpegStatus,"READY");
+        assert.equal(result.jpegReady,1);
         assert.equal(result.htmlSingleIncluded,0);
-        assert.equal(captureCount,0);
+        assert.equal(captureCount,1);
+        assert.equal((await fs.promises.readdir(path.join(result.outputFolder,"ERRORS","JPEG_FILES"))).length,1);
         assert.match(book.worksheets[0].getRow(2).getCell(2).value,/<iframe/);
         assert.match(JSON.stringify(result.rows),/Single source invalid/);
         assert.match(JSON.stringify(result.rows),/HTTPS/);
@@ -325,7 +328,7 @@ test("real rak1-normal-item.xlsx layout: C iframe, D OUTPUT, E Yahoo Single; err
     assert.equal(ws.getRow(4).getCell(7).value,null);
 });
 
-test("actual C/D/E input creates HTML and JPEG with Single first and marks #VALUE! rows FAILED",async()=>{
+test("actual C/D/E input saves a partial Single-only JPEG/HTML when iframe is #VALUE!",async()=>{
     const dir=await fs.promises.mkdtemp(path.join(os.tmpdir(),"combine-actual-format-"));
     try{
         const input=path.join(dir,"rak1-normal-item.xlsx");await fs.promises.writeFile(input,"mock spreadsheet");
@@ -347,19 +350,23 @@ test("actual C/D/E input creates HTML and JPEG with Single first and marks #VALU
         assert.equal(out.total,2);
         assert.equal(out.invalidIframeCount,1);
         assert.equal(out.ready,1);
-        assert.equal(out.failed,1);
-        assert.equal(out.htmlSingleIncluded,1);
-        assert.equal(out.jpegReady,1);
-        assert.equal(captures.length,1);
-        assert.equal(captures[0].expectedImages,7);
-        assert.ok(captures[0].renderHtml.indexOf(yahooSingle)<captures[0].renderHtml.indexOf("abu-90_1.jpg"));
+        assert.equal(out.failed,0);
+        assert.equal(out.review,1);
+        assert.equal(out.htmlSingleIncluded,2);
+        assert.equal(out.jpegReady,2);
+        assert.equal(captures.length,2);
+        const full=captures.find(x=>x.expectedImages===7);
+        assert.ok(full);
+        assert.ok(full.renderHtml.indexOf(yahooSingle)<full.renderHtml.indexOf("abu-90_1.jpg"));
         const ws=book.worksheets[0];
         assert.ok(ws.getRow(2).getCell(4).value.indexOf(yahooSingle)<ws.getRow(2).getCell(4).value.indexOf("abu-90_1.jpg"));
         assert.equal(ws.getRow(2).getCell(5).value,yahooSingle);
-        assert.match(ws.getRow(3).getCell(8).value,/FAILED/);
+        assert.match(ws.getRow(3).getCell(8).value,/REVIEW/);
         assert.equal(ws.getRow(3).getCell(5).value,"https://item-shopping.c.yimg.jp/i/n/glv_ara-0");
-        assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"HTML_FILES"))).length,1);
-        assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"JPEG_FILES"))).length,1);
+        assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"PASSED","HTML_FILES"))).length,1);
+        assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"PASSED","JPEG_FILES"))).length,1);
+        assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"ERRORS","HTML_FILES"))).length,1);
+        assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"ERRORS","JPEG_FILES"))).length,1);
     } finally {await fs.promises.rm(dir,{recursive:true,force:true});}
 });
 

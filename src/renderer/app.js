@@ -21,7 +21,8 @@
             total=payload.total;done=0;
             $("stage").textContent=payload.testMode?"Testing 3 products — saving beside Excel":"Processing full batch — saving beside Excel";
             log(`${payload.testMode?"TEST":"FULL BATCH"}: ${total} selected product(s) from ${payload.sourceTotal} source row(s).`);
-            if(payload.invalidIframeCount)log(`SOURCE WARNING: ${payload.invalidIframeCount} source row(s) contain invalid iframe values such as #VALUE!. Full batch marks those rows FAILED.`);
+            if(payload.invalidIframeCount)log(`SOURCE WARNING: ${payload.invalidIframeCount} source row(s) contain invalid iframe values such as #VALUE!. Full batch reports those rows in ERRORS, with partial output if usable Single pixels exist.`);
+            log("QUALITY CHECK: PASSED and ERRORS both use the same Single + two-column Combine layout. Broken images are skipped without changing column layout; JPEG height >3800px is REVIEW.");
         }
         if(payload.stage==="halted"){
             log(`AUTOMATIC STOP: ${payload.message}`);
@@ -49,7 +50,7 @@
         for(const id of ["statReady","statReview","statFailed","statJpeg"])$(id).textContent="0";
         $("progressCount").textContent="0 / 0";$("meterFill").style.width="0%";
         $("meter").setAttribute("aria-valuenow","0");
-        $("openFolder").disabled=true;$("openExcel").disabled=true;
+        $("openFolder").disabled=true;$("openExcel").disabled=true;$("openErrorsExcel").disabled=true;
     }
     function selectWorkbook(filePath){
         if(busy)return;
@@ -69,13 +70,15 @@
         log(`${maxProducts===3?"TEST 3 PRODUCTS":"FULL BATCH"}: loading Excel, extracting iframe images, generating HTML and direct JPEG ...`);
         try{
             const result=await api.startBatch(selectedWorkbook,undefined,maxProducts);
-            $("openFolder").disabled=false;$("openExcel").disabled=false;
+            $("openFolder").disabled=false;$("openExcel").disabled=false;$("openErrorsExcel").disabled=false;
             $("remembered").textContent=`Last Excel folder: ${selectedWorkbook.replace(/[\\/][^\\/]+$/,"")}`;
             log(`Results Excel: ${result.resultsExcel}`);
+            log(`Errors-only Excel: ${result.errorsExcel}`);
+            log(`Output folders: PASSED (${result.ready}), ERRORS (${result.errorsCount})`);
             log(`HTML files: ${result.htmlFiles}; JPEG files: ${result.jpegReady}; READY: ${result.ready}; REVIEW: ${result.review}; FAILED: ${result.failed}; SKIPPED: ${result.skipped}`);
             if(result.autoStopped)log(`AUTOMATIC STOP: ${result.stoppedReason}`);
             else if(result.cancelled)log("Batch stopped. Completed entries and skipped-row statuses were saved.");
-            if(result.failed||result.review)log(`See BATCH_REPORT.json and REVIEW / ERROR column for individual product errors.`);
+            if(result.failed||result.review)log(`Open COMBINE_ERRORS_ONLY.xlsx to see original iframe/Single URLs and broken image links.`);
             $("stage").textContent=result.autoStopped?"Stopped — repeated JPEG failures":result.cancelled?
                 "Stopped — partial results saved":"Complete — saved beside Excel";
         }catch(e){$("stage").textContent="Batch stopped with an error";log("ERROR: "+(e?.message||e));}
@@ -113,9 +116,11 @@
     });
     $("openFolder").addEventListener("click",async()=>{try{await api.openOutput();}catch(e){log("ERROR: "+e.message);}});
     $("openExcel").addEventListener("click",async()=>{try{await api.openExcel();}catch(e){log("ERROR: "+e.message);}});
+    $("openErrorsExcel").addEventListener("click",async()=>{try{await api.openErrorsExcel();}catch(e){log("ERROR: "+e.message);}});
     api.getPreferences().then(p=>{
         $("remembered").textContent=p.lastExcelFolder?`Last Excel folder: ${p.lastExcelFolder}`:"Last Excel folder: not selected";
         $("openFolder").disabled=!p.lastOutputFolder;
         $("openExcel").disabled=!p.lastResultsExcel;
+        $("openErrorsExcel").disabled=!p.lastOutputFolder;
     }).catch(e=>log("Preferences could not be loaded: "+e.message));
 })();

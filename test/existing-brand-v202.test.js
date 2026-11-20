@@ -92,9 +92,9 @@ test("v2.0.2: existing Excel C iframe / D output / E Single yields ID-named HTML
         assert.equal(report.ready,1);
         assert.equal(report.rows[0].productId,"abu-90");
         const htmlName="abu-90.html",jpegName="abu-90combine.jpg";
-        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"HTML_FILES")),[htmlName]);
-        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"JPEG_FILES")),[jpegName]);
-        const html=await fs.promises.readFile(path.join(report.outputFolder,"HTML_FILES",htmlName),"utf8");
+        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"PASSED","HTML_FILES")),[htmlName]);
+        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"PASSED","JPEG_FILES")),[jpegName]);
+        const html=await fs.promises.readFile(path.join(report.outputFolder,"PASSED","HTML_FILES",htmlName),"utf8");
         assert.doesNotMatch(html,/DETAILS/);
         assert.ok(html.indexOf(single)<html.indexOf(img(1)));
         assert.equal(ws.getRow(2).getCell(3).value,iFrameFor("ABU-90"));
@@ -115,6 +115,6 @@ test("v2.0.2: duplicate source IDs are reported, never overwritten in a bulk bat
         const report=await batch.generate(excel);
         assert.equal(report.total,2);assert.equal(report.ready,1);assert.equal(report.failed,1);
         assert.match(report.rows[1].warning,/Duplicate output ID/);
-        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"HTML_FILES")),["abu-90.html"]);
+        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"PASSED","HTML_FILES")),["abu-90.html"]);
     }finally{await fs.promises.rm(dir,{recursive:true,force:true});}
 });

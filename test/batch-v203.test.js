@@ -55,7 +55,7 @@ test("v2.0.3: Test 3 processes only first three valid iframe rows, preserves Exc
         assert.equal(report.invalidIframeCount,1);
         assert.deepEqual(report.rows.map(r=>r.productId),["item-001","item-003","item-004"]);
         assert.match(report.outputFolder,/COMBINE_TEST3_/);
-        assert.deepEqual((await fs.promises.readdir(path.join(report.outputFolder,"JPEG_FILES"))).sort(),
+        assert.deepEqual((await fs.promises.readdir(path.join(report.outputFolder,"PASSED","JPEG_FILES"))).sort(),
             ["item-001combine.jpg","item-003combine.jpg","item-004combine.jpg"]);
         assert.equal(book.worksheets[0].getRow(2).getCell(3).value,iframe("ITEM-001"));
         assert.equal(book.worksheets[0].getRow(2).getCell(5).value,single("ITEM-001"));
@@ -71,8 +71,8 @@ test("v2.0.3: a JPEG failure becomes FAILED (not REVIEW) but preserves HTML for 
         assert.equal(report.failed,1);assert.equal(report.review,0);assert.equal(report.jpegReady,0);
         assert.equal(report.htmlFiles,1);assert.equal(report.rows[0].jpegStatus,"FAILED");
         assert.match(report.rows[0].warning,/JPEG unavailable: Image URL returned HTTP 403/);
-        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"JPEG_FILES")),[]);
-        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"HTML_FILES")),["item-001.html"]);
+        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"ERRORS","JPEG_FILES")),[]);
+        assert.deepEqual(await fs.promises.readdir(path.join(report.outputFolder,"ERRORS","HTML_FILES")),["item-001.html"]);
     });
 });
 

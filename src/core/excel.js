@@ -6,7 +6,8 @@ const {pathToFileURL}=require("url");
 const {iframeUrl}=require("./iframeHtml");
 const {looksLikeSingleSource,looksLikeRemoteSingle}=require("./iframeSingle");
 const MAX_ROWS=15000,MAX_EXCEL_CELL=32767;
-const QC_HEADERS=["STATUS","JPEG STATUS","SINGLE STATUS","DETECTED LINE UP","DETECTED DETAILS","SPLIT METHOD","REVIEW / ERROR"];
+const QC_HEADERS=["STATUS","JPEG STATUS","SINGLE STATUS","DETECTED LINE UP","DETECTED DETAILS","SPLIT METHOD","REVIEW / ERROR",
+    "ISSUE CODES","JPEG HEIGHT (PX)","BROKEN DETAIL URLS"];
 // Accept SINGLE, SINGLE IMAGE URL, SINGLE IMAGE PATH and SINGLE IMAGE URL / PATH.
 const HEADER_SINGLE=/^single(?:\s+(?:image|photo|picture|file|path|url|link|source|or))*$/i;
 const HEADER_LINEUP=/^(?:line\s*up|lineup)\s*(?:image\s*)?(?:count|#|images)$/i;
@@ -57,7 +58,20 @@ function iframeColumn(ws){
     if(preferred && candidates.has(preferred))return preferred;
     let topCol=null,topCount=0;
     for(const [col,count] of candidates){if(count>topCount){topCol=col;topCount=count;}}
-    return topCol;
+    if(topCol)return topCol;
+    // An error-only workbook can have no readable iframe values at all.
+    // Still report its source errors rather than refusing the entire batch.
+    if(preferred)return preferred;
+    if(ws.columnCount>=5){
+        for(let r=2;r<=Math.min(ws.rowCount,200);r++){
+            const row=ws.getRow(r);
+            if(/^#(?:VALUE!|REF!|N\/A|NAME\?|DIV\/0!|NUM!|NULL!)/i.test(cellText(row.getCell(3)))&&
+               (looksLikeSingleSource(singleCellText(row.getCell(5)))||
+                   looksLikeRemoteSingle(singleCellText(row.getCell(5)))) &&
+               (cellText(row.getCell(1))||cellText(row.getCell(2))))return 3;
+        }
+    }
+    return null;
 }
 function findSingleCol(ws,iframeCol){
     const explicit=detectHeaderColumn(ws,HEADER_SINGLE,iframeCol);
@@ -68,7 +82,15 @@ function findSingleCol(ws,iframeCol){
     for(let r=1;r<=ws.rowCount && samples.length<160;r++){
         if(looksLikeIframe(cellText(ws.getRow(r).getCell(iframeCol))))samples.push(r);
     }
-    if(!samples.length)return null;
+    if(!samples.length){
+        if(iframeCol===3){
+            for(let r=2;r<=Math.min(ws.rowCount,200);r++){
+                const sample=singleCellText(ws.getRow(r).getCell(5));
+                if(looksLikeSingleSource(sample)||looksLikeRemoteSingle(sample))return 5;
+            }
+        }
+        return null;
+    }
     const counts=new Map(),maxCol=Math.min(Math.max(ws.columnCount||0,iframeCol+2),60);
     for(let col=1;col<=maxCol;col++){
         if(col===iframeCol)continue;
@@ -81,6 +103,14 @@ function findSingleCol(ws,iframeCol){
         if(n>0)counts.set(col,n);
     }
     if(iframeCol===3 && counts.has(5))return 5;
+    if(iframeCol===3){
+        // In headerless rak1 workbooks, E may contain an invalid image host.
+        // Treat it as the Single source so it is reported as BROKEN rather than
+        // silently interpreted as "no Single provided".
+        for(const r of samples){
+            if(looksLikeRemoteSingle(singleCellText(ws.getRow(r).getCell(5))))return 5;
+        }
+    }
     if(iframeCol>1 && counts.has(iframeCol-1))return iframeCol-1;
     let selected=null,highest=0;
     for(const [col,n] of counts)if(n>highest){selected=col;highest=n;}
@@ -210,6 +240,9 @@ function writeResults(workbook,sheets,results){
         ws.getColumn(qc["DETECTED DETAILS"]).width=17;
         ws.getColumn(qc["SPLIT METHOD"]).width=26;
         ws.getColumn(qc["REVIEW / ERROR"]).width=85;
+        ws.getColumn(qc["ISSUE CODES"]).width=44;
+        ws.getColumn(qc["JPEG HEIGHT (PX)"]).width=20;
+        ws.getColumn(qc["BROKEN DETAIL URLS"]).width=100;
         // Reviewer-controlled count for difficult groups. Leave blank by
         // default; editing it and rerunning the results workbook overrides
         // auto classification without changing the original source columns.
@@ -230,7 +263,12 @@ function writeResults(workbook,sheets,results){
             row.getCell(qc["DETECTED DETAILS"]).value=entry.detailsCount??"";
             row.getCell(qc["SPLIT METHOD"]).value=entry.method||"";
             const warn=row.getCell(qc["REVIEW / ERROR"]);
-            warn.value=entry.warning||"";warn.alignment={vertical:"top",wrapText:true};
+            warn.value=String(entry.warning||"").slice(0,MAX_EXCEL_CELL);
+            row.getCell(qc["ISSUE CODES"]).value=(entry.issues||[]).map(x=>x.code).join(" | ");
+            row.getCell(qc["JPEG HEIGHT (PX)"]).value=entry.jpegHeight??null;
+            const broken=row.getCell(qc["BROKEN DETAIL URLS"]);
+            broken.value=(entry.brokenImages||[]).join("\n").slice(0,MAX_EXCEL_CELL);
+            broken.alignment={vertical:"top",wrapText:true};
         }
         if(hasHeader){ws.views=[{state:"frozen",ySplit:1}];}
     }
