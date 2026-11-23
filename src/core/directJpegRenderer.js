@@ -5,6 +5,7 @@
 const fs = require("fs");
 const sharp = require("sharp");
 const {getImageBuffer} = require("./imageDownload");
+const {SinglePlaceholderInspector}=require("./singlePlaceholder");
 const {galleryImages,calculateFlow} = require("./existingBrand");
 const {DIM} = require("./layoutConstants");
 const {MAX_HEIGHT} = require("./iframeJpegRenderer");
@@ -53,8 +54,9 @@ function planExistingJpeg(gallerySizes,singleHeight=0){
     return {width:WIDTH,height,galleryY,columnWidth:grid.columnWidth,tiles,hasSingle:singleHeight>0,singleHeight};
 }
 class DirectJpegRenderer {
-    constructor({imageFetcher=getImageBuffer,maxConcurrentDownloads=3}={}){
+    constructor({imageFetcher=getImageBuffer,maxConcurrentDownloads=3,singleInspector=null}={}){
         this.imageFetcher=imageFetcher;
+        this.singleInspector=singleInspector||new SinglePlaceholderInspector();
         this.maxConcurrentDownloads=Math.max(1,Math.min(6,maxConcurrentDownloads|0));
     }
     async loadImage(source,targetWidth,label,{allowUpscale=false}={}){
@@ -81,15 +83,23 @@ class DirectJpegRenderer {
             try { return {url,index:i,image:await this.loadImage(url,DIM.cell,`Gallery image ${i+1}`)}; }
             catch(error){return {url,index:i,error:String(error?.message||error)};}
         });
-        let singleAsset=null,singleError=null,singleBlank=false;
+        let singleAsset=null,singleError=null,singleBlank=false,singleNoImage=false;
+        let singlePlaceholderReview=false,singlePlaceholderDetail='',singlePlaceholderMatch=null;
         if(single){
             try{
                 singleAsset=await this.loadImage(single,WIDTH,'Single image',{allowUpscale:true});
                 singleBlank=await isNearlyBlankSingle(singleAsset.bytes);
+                if(!singleBlank){
+                    const inspection=await this.singleInspector.inspect(singleAsset.bytes);
+                    singleNoImage=Boolean(inspection.noImage);
+                    singlePlaceholderReview=Boolean(inspection.review||inspection.error);
+                    singlePlaceholderDetail=inspection.reason||inspection.error||'';
+                    singlePlaceholderMatch=inspection.appearance?.yahooPlaceholderSimilarity??null;
+                }
             } catch(error){singleError=String(error?.message||error);}
         }
         return {galleryEntries:gallery.filter(x=>x.image),failedGallery:gallery.filter(x=>x.error),
-            singleAsset,singleError,singleBlank};
+            singleAsset,singleError,singleBlank,singleNoImage,singlePlaceholderReview,singlePlaceholderDetail,singlePlaceholderMatch};
     }
     async capture(_htmlFile,outputJpeg,{images,single=null,expectedImages,preparedAssets=null}={}) {
         const urls=galleryImages(images,{allowEmpty:Boolean(single)});
@@ -129,6 +139,6 @@ class DirectJpegRenderer {
             throw error;
         }
     }
-    async close(){}
+    async close(){await this.singleInspector?.close?.();}
 }
 module.exports={DirectJpegRenderer,planExistingJpeg,mapLimited,inlineImageBytes,isNearlyBlankSingle};

@@ -3,12 +3,14 @@
 // The SAME validated image sequence drives the HTML table and the JPEG
 // compositor, irrespective of PASSED/ERRORS routing. Broken detail URLs have
 // been removed before this step; surviving images are reflowed left-to-right.
+// Exception: a valid Single with a broken/missing iframe is retained as a
+// SINGLE-ONLY REVIEW output under ERRORS, never counted as a passed Combine.
 const {galleryImages,existingBrandSnippet,existingBrandJpegHtml}=require('./existingBrand');
 const {standaloneHtml}=require('./iframeHtml');
 
 function buildExistingCombineOutput({images=[],single=null,singleUrl=null}={}){
-    const gallery=galleryImages(images,{allowEmpty:Boolean(single)});
-    if(!gallery.length&&!single)throw new Error('Cannot build a Combine without validated images.');
+    const gallery=galleryImages(images,{allowEmpty:true});
+    if(!gallery.length&&!single)throw new Error('Cannot build an image output: no valid Single or Detail images.');
     const isLocalSingle=Boolean(single&&!singleUrl);
     // Remote Singles are embedded by URL. A local Single is embedded only in
     // the REVIEW file and never copied into Rakuten's Excel OUTPUT cell.
@@ -24,8 +26,8 @@ function buildExistingCombineOutput({images=[],single=null,singleUrl=null}={}){
         jpegHtml:existingBrandJpegHtml({images:gallery,single}),
         expectedImages:gallery.length+(single?1:0),
         galleryRows:Math.ceil(gallery.length/2),
-        htmlPublishable:!isLocalSingle,
-        layout:'SINGLE_TOP_THEN_TWO_COLUMNS'
+        htmlPublishable:!isLocalSingle&&gallery.length>0,
+        layout:gallery.length?'SINGLE_TOP_THEN_TWO_COLUMNS':'SINGLE_ONLY_IFRAME_ERROR'
     };
 }
 

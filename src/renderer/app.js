@@ -22,7 +22,7 @@
             $("stage").textContent=payload.testMode?"Testing 3 products — saving beside Excel":"Processing full batch — saving beside Excel";
             log(`${payload.testMode?"TEST":"FULL BATCH"}: ${total} selected product(s) from ${payload.sourceTotal} source row(s).`);
             if(payload.invalidIframeCount)log(`SOURCE WARNING: ${payload.invalidIframeCount} source row(s) contain invalid iframe values such as #VALUE!. Full batch reports those rows in ERRORS, with partial output if usable Single pixels exist.`);
-            log("QUALITY CHECK: PASSED and ERRORS both use the same Single + two-column Combine layout. Broken images are skipped without changing column layout; JPEG height >3800px is REVIEW.");
+            log("QUALITY CHECK: Valid Details stay in the fixed two-column Combine; a broken iframe with a valid Single produces a Single-only preview in ERRORS. Confirmed NO IMAGE Singles stay visible in ERRORS JPEG/HTML for QC; nearly-blank Singles are flagged and excluded. Excel date/SKU corruption and JPEG height >3800px are REVIEW.");
         }
         if(payload.stage==="halted"){
             log(`AUTOMATIC STOP: ${payload.message}`);
@@ -76,6 +76,8 @@
             log(`Errors-only Excel: ${result.errorsExcel}`);
             log(`Output folders: PASSED (${result.ready}), ERRORS (${result.errorsCount})`);
             log(`HTML files: ${result.htmlFiles}; JPEG files: ${result.jpegReady}; READY: ${result.ready}; REVIEW: ${result.review}; FAILED: ${result.failed}; SKIPPED: ${result.skipped}`);
+            log(`Excel SKU dates recovered: ${result.skuDateRecoveredCount||0}; Yahoo date-serial URLs repaired: ${result.singleDateUrlRepairedCount||0}; Single-only error previews: ${result.singleOnlyErrorOutputCount||0}.`);
+            log(`NO IMAGE Single errors: ${result.singleNoImageCount||0}; retained in ERRORS JPEG/HTML: ${result.singleNoImageRetainedCount||0}; uncertain gray Singles needing review: ${result.singlePlaceholderReviewCount||0}.`);
             if(result.autoStopped)log(`AUTOMATIC STOP: ${result.stoppedReason}`);
             else if(result.cancelled)log("Batch stopped. Completed entries and skipped-row statuses were saved.");
             if(result.failed||result.review)log(`Open COMBINE_ERRORS_ONLY.xlsx to see original iframe/Single URLs and broken image links.`);

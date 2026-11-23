@@ -7,7 +7,8 @@ const COLUMNS=[
     ['PRODUCT ID',20],['SOURCE SHEET',24],['SOURCE ROW',14],['STATUS',14],
     ['ISSUE CODES',38],['IFRAME SOURCE',85],['IFRAME URL',85],
     ['SINGLE URL / PATH',85],['BROKEN DETAIL URLS',100],
-    ['JPEG HEIGHT (PX)',19],['JPEG FILE',42],['HTML FILE',42],['ERROR DETAILS',110]
+    ['JPEG HEIGHT (PX)',19],['JPEG FILE',42],['HTML FILE',42],['ERROR DETAILS',110],
+    ['SOURCE SKU A',46],['SOURCE SKU B',46],['SKU RESOLUTION',42],['SINGLE URL USED',100]
 ];
 function addSheet(book,name){
     if(typeof book.addWorksheet==='function')return book.addWorksheet(name);
@@ -51,12 +52,12 @@ function initSheet(sheet){
     });
     sheet.getRow(1).height=28;
     sheet.views=[{state:'frozen',ySplit:1}];
-    if(typeof sheet.autoFilter!=='undefined')sheet.autoFilter={from:'A1',to:'M1'};
+    if(typeof sheet.autoFilter!=='undefined')sheet.autoFilter={from:'A1',to:'Q1'};
 }
 function classifyIssueTab(issues){
     const keys=issues.map(x=>x.code);
-    if(keys.some(x=>x.startsWith('SINGLE_')))return 'SINGLE_ERRORS';
-    if(keys.some(x=>x.startsWith('IFRAME_')||x.startsWith('DETAIL_')))return 'IFRAME_ERRORS';
+    if(keys.some(x=>x.startsWith('SINGLE_')&&x!=='SINGLE_ONLY_IFRAME_ERROR'))return 'SINGLE_ERRORS';
+    if(keys.some(x=>x.startsWith('IFRAME_')||x.startsWith('DETAIL_')||x==='NO_VALID_DETAILS'||x==='SINGLE_ONLY_IFRAME_ERROR'))return 'IFRAME_ERRORS';
     if(keys.includes('HEIGHT_OVER_3800'))return 'HEIGHT_REVIEW';
     return 'OTHER_ERRORS';
 }
@@ -78,6 +79,11 @@ function issueRow(sheet,n,result){
     fileLink(cells.getCell(11),result.jpegFile);
     fileLink(cells.getCell(12),result.htmlFile);
     cells.getCell(13).value=String(result.warning||'').slice(0,32767);
+    cells.getCell(14).value=String(result.sourceSkuA||'').slice(0,32767);
+    cells.getCell(15).value=String(result.sourceSkuB||'').slice(0,32767);
+    cells.getCell(16).value=String(result.skuResolution||'');
+    const used=String(result.effectiveSinglePath||'');
+    link(cells.getCell(17),used,/^https:\/\//i.test(used)?used:'');
     for(const column of [5,6,9,13])cells.getCell(column).alignment={vertical:'top',wrapText:true};
 }
 async function writeErrorWorkbook(sourceWorkbook,results,filename){
@@ -88,8 +94,8 @@ async function writeErrorWorkbook(sourceWorkbook,results,filename){
     for(const result of issues){
         const keys=new Set((result.issues||[]).map(x=>x.code));
         // A row can appear on more than one category tab if it has multiple problems.
-        if([...keys].some(x=>x.startsWith('SINGLE_')))grouped.get('SINGLE_ERRORS').push(result);
-        if([...keys].some(x=>x.startsWith('IFRAME_')||x.startsWith('DETAIL_')))grouped.get('IFRAME_ERRORS').push(result);
+        if([...keys].some(x=>x.startsWith('SINGLE_')&&x!=='SINGLE_ONLY_IFRAME_ERROR'))grouped.get('SINGLE_ERRORS').push(result);
+        if([...keys].some(x=>x.startsWith('IFRAME_')||x.startsWith('DETAIL_')||x==='NO_VALID_DETAILS'||x==='SINGLE_ONLY_IFRAME_ERROR'))grouped.get('IFRAME_ERRORS').push(result);
         if(keys.has('HEIGHT_OVER_3800'))grouped.get('HEIGHT_REVIEW').push(result);
         if(![...grouped.values()].some(rows=>rows.includes(result)))grouped.get('OTHER_ERRORS').push(result);
     }

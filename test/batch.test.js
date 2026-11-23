@@ -328,7 +328,7 @@ test("real rak1-normal-item.xlsx layout: C iframe, D OUTPUT, E Yahoo Single; err
     assert.equal(ws.getRow(4).getCell(7).value,null);
 });
 
-test("actual C/D/E input saves a partial Single-only JPEG/HTML when iframe is #VALUE!",async()=>{
+test("actual C/D/E #VALUE! iframe keeps verified Single-only JPEG/HTML in ERRORS",async()=>{
     const dir=await fs.promises.mkdtemp(path.join(os.tmpdir(),"combine-actual-format-"));
     try{
         const input=path.join(dir,"rak1-normal-item.xlsx");await fs.promises.writeFile(input,"mock spreadsheet");
@@ -362,6 +362,9 @@ test("actual C/D/E input saves a partial Single-only JPEG/HTML when iframe is #V
         assert.ok(ws.getRow(2).getCell(4).value.indexOf(yahooSingle)<ws.getRow(2).getCell(4).value.indexOf("abu-90_1.jpg"));
         assert.equal(ws.getRow(2).getCell(5).value,yahooSingle);
         assert.match(ws.getRow(3).getCell(8).value,/REVIEW/);
+        assert.ok(out.rows[1].issueCodes.includes('NO_VALID_DETAILS'));
+        assert.ok(out.rows[1].issueCodes.includes('SINGLE_ONLY_IFRAME_ERROR'));
+        assert.equal(out.rows[1].combineLayout,'SINGLE_ONLY_IFRAME_ERROR');
         assert.equal(ws.getRow(3).getCell(5).value,"https://item-shopping.c.yimg.jp/i/n/glv_ara-0");
         assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"PASSED","HTML_FILES"))).length,1);
         assert.equal((await fs.promises.readdir(path.join(out.outputFolder,"PASSED","JPEG_FILES"))).length,1);

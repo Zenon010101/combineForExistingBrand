@@ -81,7 +81,7 @@ test('v2.0.6: real JPEGs and HTML go into PASSED or ERRORS; errors Excel preserv
             singlePreparer:async url=>({dataUri:url,htmlUrl:url}),
             rendererFactory:()=>new DirectJpegRenderer({imageFetcher})});
         const report=await service.generate(input);
-        assert.equal(report.version,'2.0.7');
+        assert.equal(report.version,'2.0.12');
         assert.equal(report.ready,1);
         assert.equal(report.review,5);
         assert.equal(report.failed,1);
@@ -97,7 +97,11 @@ test('v2.0.6: real JPEGs and HTML go into PASSED or ERRORS; errors Excel preserv
         assert.ok(rows['d-1'].issueCodes.includes('HEIGHT_OVER_3800'));
         assert.ok(rows['d-1'].jpegHeight>3800);
         assert.ok(rows['e-1'].issueCodes.includes('IFRAME_ERROR'));
-        assert.equal(rows['e-1'].jpegStatus,'READY','Single-only still yields JPEG');
+        assert.equal(rows['e-1'].jpegStatus,'READY','A broken iframe with a valid Single produces an error-only Single preview');
+        assert.ok(rows['e-1'].issueCodes.includes('NO_VALID_DETAILS'));
+        assert.ok(rows['e-1'].jpegFile&&rows['e-1'].htmlFile);
+        assert.equal(rows['e-1'].combineLayout,'SINGLE_ONLY_IFRAME_ERROR');
+        assert.ok(rows['e-1'].issueCodes.includes('SINGLE_ONLY_IFRAME_ERROR'));
         assert.ok(rows['f-1'].issueCodes.includes('NO_USABLE_IMAGES'));
         assert.equal(rows['f-1'].jpegFile,null);
         assert.ok(rows['g-1'].issueCodes.includes('SINGLE_BLANK_REVIEW'));
@@ -108,9 +112,7 @@ test('v2.0.6: real JPEGs and HTML go into PASSED or ERRORS; errors Excel preserv
         const html=await fs.promises.readFile(rows['c-1'].htmlFile,'utf8');
         assert.ok(html.includes(detail('C-1',1))&&html.includes(detail('C-1',3)));
         assert.doesNotMatch(html,/c-1_bad2/);
-        const singleOnly=await fs.promises.readFile(rows['e-1'].htmlFile,'utf8');
-        assert.match(singleOnly,/alt="Single"/);
-        assert.doesNotMatch(singleOnly,/eb-gallery-row/);
+        assert.equal(rows['e-1'].singleStatus,'INCLUDED HTML+JPEG');
         const jpegMeta=await sharp(rows['d-1'].jpegFile).metadata();
         assert.equal(jpegMeta.width,600);
         assert.equal(jpegMeta.height,rows['d-1'].jpegHeight);
@@ -147,9 +149,11 @@ test('v2.0.6: entirely broken Rakuten iframe formula column remains reportable',
         const result=await service.generate(input);
         assert.equal(result.total,2);
         assert.equal(result.invalidIframeCount,2);
-        assert.equal(result.review,2,'usable Singles may produce partial outputs');
+        assert.equal(result.review,2,'Valid Singles are kept as error-only previews');
+        assert.equal(result.failed,0);
         assert.equal(result.jpegReady,2);
-        assert.ok(result.rows.every(x=>x.issueCodes.includes('IFRAME_ERROR')));
+        assert.ok(result.rows.every(x=>x.issueCodes.includes('IFRAME_ERROR')&&x.issueCodes.includes('NO_VALID_DETAILS')));
+        assert.ok(result.rows.every(x=>x.jpegFile&&x.htmlFile&&x.issueCodes.includes('SINGLE_ONLY_IFRAME_ERROR')));
     });
 });
 

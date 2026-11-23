@@ -1,0 +1,18 @@
+Rakuten Combine Batch v2.0.10 | Changed/new file manifest
+Base: v2.0.9 full project
+
+PATCH_README_v2.0.10.md
+README.md
+RELEASE_NOTES_v2.0.10.md
+docs/SINGLE_NO_IMAGE_QC_V210.md
+package.json
+src/core/batch.js
+src/core/directJpegRenderer.js
+src/core/singlePlaceholder.js
+src/renderer/app.js
+src/renderer/index.html
+test/broken-image-qc-v206.test.js
+test/error-combine-layout-v207.test.js
+test/single-no-image-v210.test.js
+test/sku-date-recovery-v209.test.js
+PATCH_MANIFEST_v2.0.10.txt

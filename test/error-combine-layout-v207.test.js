@@ -56,7 +56,7 @@ test('v2.0.7: PASSED and ERRORS use the identical Single + two-column Combine ge
         singlePreparer:async url=>({dataUri:url,htmlUrl:url}),
         rendererFactory:()=>new DirectJpegRenderer({imageFetcher})});
     const report=await service.generate(input);
-    assert.equal(report.version,'2.0.7');
+    assert.equal(report.version,'2.0.12');
     assert.equal(report.ready,1);assert.equal(report.review,2);
     const rows=Object.fromEntries(report.rows.map(r=>[r.productId,r]));
     const good=rows['good-1'],detail=rows['bad-detail'],broken=rows['bad-single'];
@@ -87,7 +87,7 @@ test('v2.0.7: PASSED and ERRORS use the identical Single + two-column Combine ge
  });
 });
 
-test('v2.0.7: local Single-only products get matching JPEG and local HTML Combine preview in ERRORS, never Rakuten-ready HTML',async()=>{
+test('v2.0.9: local Single-only sources are saved as review-only JPEG/HTML under ERRORS',async()=>{
  await initializeColors();
  await withBatch(async({input})=>{
   const localSingle=await png(colors.single,600,600);
@@ -101,21 +101,21 @@ test('v2.0.7: local Single-only products get matching JPEG and local HTML Combin
       singlePreparer:async()=>({dataUri:localData,htmlUrl:null}),
       rendererFactory:()=>new DirectJpegRenderer({imageFetcher:async()=>{throw new Error('Should not download local Single');}})});
   const report=await service.generate(input);
+  assert.equal(report.failed,0);
   assert.equal(report.review,1);
   const product=report.rows[0];
   assert.equal(product.status,'REVIEW');
   assert.ok(product.issueCodes.includes('IFRAME_ERROR'));
-  assert.ok(product.issueCodes.includes('SINGLE_HTML_MISSING'));
+  assert.ok(product.issueCodes.includes('NO_VALID_DETAILS'));
+  assert.ok(product.issueCodes.includes('SINGLE_HTML_MISSING'),'Local Single HTML remains preview-only');
   assert.equal(product.htmlPreviewOnly,true);
   assert.equal(product.combineGalleryRows,0);
   assert.ok(product.jpegFile&&product.htmlFile);
-  assert.equal((await sharp(product.jpegFile).metadata()).height,600);
-  const html=await fs.promises.readFile(product.htmlFile,'utf8');
-  assert.match(html,/data:image\/jpeg;base64,/);
-  assert.match(html,/class="eb-single-row"/);
-  assert.doesNotMatch(html,/class="eb-single-gap"|class="eb-gallery-row"/);
-  assert.equal(book.worksheets[0].getRow(2).getCell(4).value,'','local preview must never be copied into Rakuten OUTPUT column');
-  assert.ok(sameColor(await pixel(product.jpegFile,0,0),colors.single));
+  assert.equal(product.combineLayout,'SINGLE_ONLY_IFRAME_ERROR');
+  assert.equal(product.singleStatus,'INCLUDED JPEG + PREVIEW HTML');
+  assert.deepEqual(await fs.promises.readdir(path.join(report.errorsFolder,'JPEG_FILES')),['LOCAL-1combine.jpg']);
+  assert.deepEqual(await fs.promises.readdir(path.join(report.errorsFolder,'HTML_FILES')),['LOCAL-1.html']);
+  assert.equal(book.worksheets[0].getRow(2).getCell(4).value,'','Nothing to copy into Rakuten OUTPUT column');
  });
 });
 
@@ -127,6 +127,8 @@ test('v2.0.7: cannot publish a local inline Single or accidentally mix two Singl
  assert.doesNotMatch(snippet,/eb-single-gap/);
  assert.throws(()=>existingBrandSnippet([],{previewSingle:jpegData,singleUrl:single('A-1')}),/both public and local preview/);
  assert.throws(()=>existingBrandSnippet([],{previewSingle:'data:image/jpeg;base64,nonsense#'}),/valid bounded JPEG/);
+ assert.equal(buildExistingCombineOutput({images:[],single:jpegData}).layout,'SINGLE_ONLY_IFRAME_ERROR');
  assert.equal(buildExistingCombineOutput({images:[],single:jpegData}).htmlPublishable,false);
+ assert.throws(()=>buildExistingCombineOutput({images:[]}),/no valid Single or Detail images/);
  assert.equal(buildExistingCombineOutput({images:[img('A-1',1)],single:single('A-1'),singleUrl:single('A-1')}).htmlPublishable,true);
 });

@@ -1,0 +1,20 @@
+Rakuten Combine Batch v2.0.11 | Changed/new file manifest
+Base: v2.0.10 full project
+
+PATCH_MANIFEST_v2.0.11.txt
+PATCH_README_v2.0.11.md
+README.md
+RELEASE_NOTES_v2.0.11.md
+docs/YAHOO_NO_IMAGE_V211.md
+package.json
+src/core/assets/yahoo-no-image-reference.png
+src/core/batch.js
+src/core/directJpegRenderer.js
+src/core/singlePlaceholder.js
+src/renderer/index.html
+test/broken-image-qc-v206.test.js
+test/error-combine-layout-v207.test.js
+test/fixtures/yahoo-no-image-actual-compressed.jpg
+test/single-no-image-v210.test.js
+test/sku-date-recovery-v209.test.js
+test/yahoo-single-placeholder-v211.test.js

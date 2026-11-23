@@ -5,9 +5,10 @@ const path=require("path");
 const {pathToFileURL}=require("url");
 const {iframeUrl}=require("./iframeHtml");
 const {looksLikeSingleSource,looksLikeRemoteSingle}=require("./iframeSingle");
+const {inspectProductRow}=require('./skuRecovery');
 const MAX_ROWS=15000,MAX_EXCEL_CELL=32767;
 const QC_HEADERS=["STATUS","JPEG STATUS","SINGLE STATUS","DETECTED LINE UP","DETECTED DETAILS","SPLIT METHOD","REVIEW / ERROR",
-    "ISSUE CODES","JPEG HEIGHT (PX)","BROKEN DETAIL URLS"];
+    "ISSUE CODES","JPEG HEIGHT (PX)","BROKEN DETAIL URLS", "SKU RESOLUTION", "SOURCE SKU (A/B)", "SINGLE URL USED"];
 // Accept SINGLE, SINGLE IMAGE URL, SINGLE IMAGE PATH and SINGLE IMAGE URL / PATH.
 const HEADER_SINGLE=/^single(?:\s+(?:image|photo|picture|file|path|url|link|source|or))*$/i;
 const HEADER_LINEUP=/^(?:line\s*up|lineup)\s*(?:image\s*)?(?:count|#|images)$/i;
@@ -59,13 +60,14 @@ function iframeColumn(ws){
     let topCol=null,topCount=0;
     for(const [col,count] of candidates){if(count>topCount){topCol=col;topCount=count;}}
     if(topCol)return topCol;
-    // An error-only workbook can have no readable iframe values at all.
-    // Still report its source errors rather than refusing the entire batch.
+    // A malformed, missing or error-only iframe column can have no
+    // readable iframe values. Still record source issues in the error Excel.
     if(preferred)return preferred;
     if(ws.columnCount>=5){
         for(let r=2;r<=Math.min(ws.rowCount,200);r++){
             const row=ws.getRow(r);
-            if(/^#(?:VALUE!|REF!|N\/A|NAME\?|DIV\/0!|NUM!|NULL!)/i.test(cellText(row.getCell(3)))&&
+            if((/^#(?:VALUE!|REF!|N\/A|NAME\?|DIV\/0!|NUM!|NULL!)/i.test(cellText(row.getCell(3)))||
+                !cellText(row.getCell(3)))&&
                (looksLikeSingleSource(singleCellText(row.getCell(5)))||
                    looksLikeRemoteSingle(singleCellText(row.getCell(5)))) &&
                (cellText(row.getCell(1))||cellText(row.getCell(2))))return 3;
@@ -135,15 +137,22 @@ function readJobs(workbook){
             const validIframe=looksLikeIframe(raw);
             // Do not silently skip #VALUE! (or other Excel formula errors)
             // in column C of the user's 5-column product workbook.
-            const invalidSource=isRak1Format && r>1 && /^#(?:VALUE!|REF!|N\/A|NAME\?|DIV\/0!|NUM!|NULL!)/i.test(raw) &&
-                (cellText(row.getCell(1)) || cellText(row.getCell(2)));
-            if(!validIframe && !invalidSource)continue;
+            const hasProductId=Boolean(cellText(row.getCell(1))||cellText(row.getCell(2)));
+            const invalidSource=isRak1Format && r>1 && /^#(?:VALUE!|REF!|N\/A|NAME\?|DIV\/0!|NUM!|NULL!)/i.test(raw) && hasProductId;
+            // A blank C cell with a valid Single in E is still a product
+            // with a broken/missing iframe. Preserve its original row and
+            // URL in ERRORS rather than silently skipping it.
+            const missingSource=isRak1Format && r>1 && !raw && hasProductId &&
+                Boolean(singleCellText(row.getCell(singleCol)));
+            if(!validIframe && !invalidSource && !missingSource)continue;
             if(jobs.length>=MAX_ROWS)throw new Error(`Workbook has more than ${MAX_ROWS.toLocaleString()} product rows. Divide into smaller files.`);
             const overrideRaw=overrideCol?cellText(row.getCell(overrideCol)):"";
             const job={sheet:ws.name,row:r,raw,sourceCol:col,
                 singlePath:singleCol?singleCellText(row.getCell(singleCol)):"",
+                skuCells:inspectProductRow(row,{date1904:Boolean(workbook.properties?.date1904)}),
                 lineupCount:overrideRaw!==""?overrideRaw:null};
-            if(invalidSource)job.inputError=`Iframe source error in ${ws.name}!C${r}: ${raw}. Fix the original Excel iframe formula/source; this product was not converted.`;
+            if(invalidSource)job.inputError=`Iframe source error in ${ws.name}!C${r}: ${raw}. An available Single can still create an error-only JPEG/HTML preview.`;
+            else if(missingSource)job.inputError=`Iframe source missing in ${ws.name}!C${r}: cell is empty. An available Single can still create an error-only JPEG/HTML preview.`;
             else try{job.url=iframeUrl(raw);}catch(e){job.inputError=e.message;}
             jobs.push(job);
         }
@@ -243,6 +252,9 @@ function writeResults(workbook,sheets,results){
         ws.getColumn(qc["ISSUE CODES"]).width=44;
         ws.getColumn(qc["JPEG HEIGHT (PX)"]).width=20;
         ws.getColumn(qc["BROKEN DETAIL URLS"]).width=100;
+        ws.getColumn(qc["SKU RESOLUTION"]).width=36;
+        ws.getColumn(qc["SOURCE SKU (A/B)"]).width=65;
+        ws.getColumn(qc["SINGLE URL USED"]).width=85;
         // Reviewer-controlled count for difficult groups. Leave blank by
         // default; editing it and rerunning the results workbook overrides
         // auto classification without changing the original source columns.
@@ -269,6 +281,9 @@ function writeResults(workbook,sheets,results){
             const broken=row.getCell(qc["BROKEN DETAIL URLS"]);
             broken.value=(entry.brokenImages||[]).join("\n").slice(0,MAX_EXCEL_CELL);
             broken.alignment={vertical:"top",wrapText:true};
+            row.getCell(qc["SKU RESOLUTION"]).value=entry.skuResolution||"";
+            row.getCell(qc["SOURCE SKU (A/B)"]).value=[entry.sourceSkuA,entry.sourceSkuB].filter(Boolean).join(' | ');
+            row.getCell(qc["SINGLE URL USED"]).value=entry.effectiveSinglePath||"";
         }
         if(hasHeader){ws.views=[{state:"frozen",ySplit:1}];}
     }

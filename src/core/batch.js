@@ -6,7 +6,8 @@ const {iframeUrl,discoverImages,decodePage}=require('./iframeHtml');
 const {fetchSignature}=require('./variationClassifier');
 const {galleryImages}=require('./existingBrand');
 const {buildExistingCombineOutput}=require('./combineOutput');
-const {productIdFromSources,outputFileNames}=require('./outputNaming');
+const {outputFileNames}=require('./outputNaming');
+const {resolveSkuIdentity}=require('./skuRecovery');
 const {prepareSingleImage}=require('./iframeSingle');
 const {readJobs,writeResults,MAX_EXCEL_CELL}=require('./excel');
 const {writeErrorWorkbook}=require('./errorWorkbook');
@@ -90,7 +91,9 @@ class StandaloneBatch {
             const usedIds=new Map();
             for(const job of jobs){
                 try{
-                    job.outputId=productIdFromSources(job.singlePath,job.url||'');
+                    const sku=resolveSkuIdentity(job);
+                    Object.assign(job,sku);
+                    if(!job.outputId)throw new Error('No safe product ID could be verified from the iframe, Excel SKU, or Single URL.');
                     const normalized=job.outputId.toLowerCase(),first=usedIds.get(normalized);
                     if(first)throw new Error(`Duplicate output ID ${job.outputId}: already used by ${first.sheet} row ${first.row}. Unique HTML/JPEG filenames are required.`);
                     usedIds.set(normalized,{sheet:job.sheet,row:job.row});
@@ -122,10 +125,12 @@ class StandaloneBatch {
                         issues:[],brokenImages:[],jpegHeight:null,galleryCount:0,introCount:0,
                         lineupCount:job.lineupCount??null,detailsCount:null,
                         method:'',htmlFile:null,jpegFile:null,htmlSingleIncluded:false,
+                        singlePlaceholderMatch:null,
                         combineLayout:null,combineGalleryRows:0,htmlPreviewOnly:false,
                         classificationEvidence:null};
                     let attemptedJpeg=false;
                     try{
+                        for(const issue of job.skuIssues||[])addIssue(result,issue.code,issue.detail,job.singlePath);
                         if(job.outputError){
                             addIssue(result,'OUTPUT_ID_ERROR',job.outputError);
                             throw new Error('OUTPUT_ID_BLOCKED');
@@ -150,8 +155,10 @@ class StandaloneBatch {
                         const originalImageCount=images.length;
                         let preparedSingle=null;
                         if(job.singlePath){
-                            try{
-                                preparedSingle=await this.singlePreparer(job.singlePath,src);
+                            if(!job.effectiveSinglePath){
+                                result.singleStatus='ERROR / SKU DATE SERIAL';
+                            }else try{
+                                preparedSingle=await this.singlePreparer(job.effectiveSinglePath,src);
                                 if(!preparedSingle?.dataUri)throw new Error('Single image could not be read.');
                                 result.singleStatus=preparedSingle.htmlUrl?'INCLUDED HTML+JPEG':'INCLUDED JPEG + PREVIEW HTML';
                             }catch(error){
@@ -164,6 +171,7 @@ class StandaloneBatch {
                             const engine=await getRenderer();
                             if(typeof engine.prepareAssets==='function'){
                                 preparedAssets=await engine.prepareAssets({images,single:preparedSingle?.dataUri||null});
+                                result.singlePlaceholderMatch=preparedAssets.singlePlaceholderMatch??null;
                                 for(const bad of preparedAssets.failedGallery||[]){
                                     addIssue(result,'DETAIL_IMAGE_BROKEN',bad.error,bad.url);
                                     result.brokenImages.push(bad.url);
@@ -172,35 +180,55 @@ class StandaloneBatch {
                                 if(preparedSingle&&preparedAssets.singleError){
                                     addIssue(result,'SINGLE_BROKEN',preparedAssets.singleError,job.singlePath);
                                     preparedSingle=null;result.singleStatus='ERROR';
+                                } else if(preparedSingle&&preparedAssets.singleNoImage){
+                                    // Review artifact policy: keep the observed NO IMAGE bitmap
+                                    // at the top of both JPEG and HTML so QC can see the fault.
+                                    // The issue code always routes the result to ERRORS.
+                                    addIssue(result,'SINGLE_NO_IMAGE',preparedAssets.singlePlaceholderDetail||'Single source is a NO IMAGE placeholder, not a product photograph.',job.singlePath);
+                                    result.singleStatus='ERROR / NO IMAGE (RETAINED)';
                                 } else if(preparedSingle&&preparedAssets.singleBlank){
-                                    addIssue(result,'SINGLE_BLANK_REVIEW','Single appears nearly all white; verify the product is visible.',job.singlePath);
+                                    addIssue(result,'SINGLE_BLANK_REVIEW','Single appears completely white and has been excluded from the Combine; verify the source.',job.singlePath);
+                                    preparedSingle=null;preparedAssets.singleAsset=null;result.singleStatus='ERROR / BLANK SINGLE';
+                                } else if(preparedSingle&&preparedAssets.singlePlaceholderReview){
+                                    addIssue(result,'SINGLE_PLACEHOLDER_REVIEW',preparedAssets.singlePlaceholderDetail||'Gray Single resembles a NO IMAGE placeholder; verify before publishing.',job.singlePath);
                                 }
                             }
                         }
                         result.galleryCount=images.length;
                         const single=preparedSingle?.dataUri||null;
                         const singleUrl=preparedSingle?.htmlUrl||null;
-                        result.htmlSingleIncluded=Boolean(single);
-                        if(preparedSingle&&!singleUrl)
-                            addIssue(result,'SINGLE_HTML_MISSING','Single is local: generated HTML is a review-only Combine preview (inline Single); it is not publishable in Rakuten. Upload the Single and replace it with a public URL.',job.singlePath);
+                        // Keep an available Single-only review JPEG/HTML for a
+                        // failed/missing iframe, INCLUDING a detected NO IMAGE
+                        // bitmap. No decodable Single and no Details => report only.
+                        if(!images.length){
+                            addIssue(result,'NO_VALID_DETAILS',`No valid iframe Detail images remained (${originalImageCount} source URL(s) detected).`,job.url||'');
+                            if(!single)addIssue(result,'NO_USABLE_IMAGES','No valid Single or Detail images remain.');
+                            else addIssue(result,'SINGLE_ONLY_IFRAME_ERROR','Saved available Single as Single-only review JPEG/HTML in ERRORS because no valid iframe Detail images remain.',job.url||job.raw||'');
+                        }
                         if(!images.length&&!single){
-                            addIssue(result,'NO_USABLE_IMAGES',`No valid images remained (${originalImageCount} gallery URL(s) detected).`);
+                            // No pixels exist from which to build an honest output.
                         } else if(!job.outputId){
                             addIssue(result,'OUTPUT_ID_ERROR','Cannot derive a safe product ID from the original iframe or Single URL.');
                         } else {
                             const {html:htmlName,jpeg:jpegName}=outputFileNames(job.outputId);
+                            result.htmlSingleIncluded=Boolean(single);
+                            if(preparedSingle&&!singleUrl)
+                                addIssue(result,'SINGLE_HTML_MISSING','Single is local: generated HTML is a review-only preview (inline Single); it is not publishable in Rakuten. Upload the Single and replace it with a public URL.',job.singlePath);
                             // Build ONE immutable Combine sequence for both outputs.
                             // ERRORS only changes the destination, never the layout.
                             const combine=buildExistingCombineOutput({images,single,singleUrl});
                             result.combineLayout=combine.layout;
                             result.combineGalleryRows=combine.galleryRows;
-                            result.htmlPreviewOnly=!combine.htmlPublishable;
+                            const invalidSingleRetained=Boolean(single&&preparedAssets?.singleNoImage);
+                            // The error HTML exists for visual QC, but a known NO IMAGE
+                            // Single must NEVER be written as publishable HTML into Excel.
+                            result.htmlPreviewOnly=!combine.htmlPublishable||invalidSingleRetained;
                             // Generate into ERRORS first, then move both to PASSED
                             // only after successful JPEG validation and zero issues.
                             const htmlLocal=path.join(errors,'HTML_FILES',htmlName);
                             await fs.promises.writeFile(htmlLocal,combine.htmlDocument,{encoding:'utf8',flag:'wx'});
                             result.htmlFile=destination('ERRORS','HTML_FILES',htmlName);
-                            if(combine.htmlPublishable){
+                            if(combine.htmlPublishable&&!invalidSingleRetained){
                                 if(combine.htmlSnippet.length>MAX_EXCEL_CELL)
                                     addIssue(result,'HTML_CELL_TOO_LONG',`HTML length ${combine.htmlSnippet.length} exceeds Excel's ${MAX_EXCEL_CELL} character limit; the HTML file is preserved.`);
                                 else result.code=combine.htmlSnippet;
@@ -292,26 +320,36 @@ class StandaloneBatch {
             const errorsName='COMBINE_ERRORS_ONLY.xlsx';
             const errorsSummary=await writeErrorWorkbook(workbook,results,path.join(errors,errorsName));
             const counts=countSummary(results);
-            const report={generatedAt:new Date().toISOString(),version:'2.0.7',sourceExcel:src,
+            const report={generatedAt:new Date().toISOString(),version:'2.0.12',sourceExcel:src,
                 resultsExcel:path.join(final,excelName),errorsExcel:path.join(final,'ERRORS',errorsName),
                 outputFolder:final,passedFolder:path.join(final,'PASSED'),errorsFolder:path.join(final,'ERRORS'),
                 total:jobs.length,sourceTotal:workbookJobs.length,testMode,processed:done,
                 sheets:sheets.map(s=>s.name),cancelled:this.cancelRequested,autoStopped,stoppedReason,
-                jpegRenderer:'DIRECT_SHARP_TWO_COLUMN',combineLayout:'SINGLE_TOP_THEN_TWO_COLUMNS',
+                jpegRenderer:'DIRECT_SHARP_TWO_COLUMN',combineLayout:'SINGLE_TOP_THEN_TWO_COLUMNS_OR_SINGLE_ONLY_ERRORS',
                 maxJpegHeight,errorsCount:errorsSummary.rows,
                 errorsByType:errorsSummary.byType,...counts,
+                skuDateRecoveredCount:results.filter(r=>(r.issues||[]).some(x=>x.code==='SKU_EXCEL_DATE_RECOVERED')).length,
+                singleDateUrlRepairedCount:results.filter(r=>(r.issues||[]).some(x=>x.code==='SINGLE_DATE_SERIAL_REPAIRED')).length,
+                singleOnlyErrorOutputCount:results.filter(r=>r.jpegStatus==='READY'&&r.combineLayout==='SINGLE_ONLY_IFRAME_ERROR').length,
+                singleNoImageCount:results.filter(r=>(r.issues||[]).some(x=>x.code==='SINGLE_NO_IMAGE')).length,
+                singleNoImageRetainedCount:results.filter(r=>r.jpegStatus==='READY'&&r.htmlSingleIncluded&&(r.issues||[]).some(x=>x.code==='SINGLE_NO_IMAGE')).length,
+                singlePlaceholderReviewCount:results.filter(r=>(r.issues||[]).some(x=>x.code==='SINGLE_PLACEHOLDER_REVIEW')).length,
                 htmlFiles:results.filter(r=>r.htmlFile).length,
-                htmlLayout:'780px: full-bleed Single at top, 15px gap, then two fixed 386px gallery columns',
-                jpegLayout:'600px: full-bleed Single at top, 15px gap, then two fixed 293px gallery columns; images never stretched or upscaled',
+                htmlLayout:'780px: full-bleed Single at top, 15px gap if Details exist, then two fixed 386px gallery columns; Single-only previews in ERRORS',
+                jpegLayout:'600px: full-bleed Single at top, 15px gap if Details exist, then two fixed 293px gallery columns; images never stretched or upscaled',
                 classificationPolicy:'Existing Brand: preserve original source order; no Line Up/Details classification',
-                ocrMode:'Disabled for Existing Brand',excelRowsWithSingleSource:singleCount,
+                ocrMode:'English NO IMAGE Single placeholder verification only; no Line Up/Details OCR',excelRowsWithSingleSource:singleCount,
                 invalidIframeCount,photoshopRequired:false,sourceImageFilesDownloaded:true,
                 sourceImageFilesRetained:false,
                 rows:results.map(r=>({sheet:r.sheet,row:r.row,status:r.status,jpegStatus:r.jpegStatus,
-                    singleStatus:r.singleStatus,htmlSingleIncluded:Boolean(r.htmlSingleIncluded),
+                    singleStatus:r.singleStatus,singlePlaceholderMatch:r.singlePlaceholderMatch??null,
+                    htmlSingleIncluded:Boolean(r.htmlSingleIncluded),
                     combineLayout:r.combineLayout||null,combineGalleryRows:r.combineGalleryRows||0,
                     htmlPreviewOnly:Boolean(r.htmlPreviewOnly),productId:r.outputId||null,iframeUrl:r.url||null,iframeSource:r.raw,
-                    singleUrl:r.singlePath||null,htmlFile:r.htmlFile,jpegFile:r.jpegFile,
+                    singleUrl:r.singlePath||null,effectiveSingleUrl:r.effectiveSinglePath||null,
+                    sourceSkuA:r.sourceSkuA||'',sourceSkuB:r.sourceSkuB||'',skuResolution:r.skuResolution||'',
+                    iframeProductId:r.iframeProductId||null,yahooProductId:r.yahooProductId||null,
+                    htmlFile:r.htmlFile,jpegFile:r.jpegFile,
                     jpegHeight:r.jpegHeight??null,issueCodes:(r.issues||[]).map(x=>x.code),
                     issues:r.issues||[],introCount:0,lineupCount:r.lineupCount??null,
                     detailsCount:null,galleryCount:r.galleryCount||0,method:r.method,

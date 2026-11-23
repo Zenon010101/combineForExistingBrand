@@ -9,7 +9,7 @@
 </head>
 <body>
 <div class="app">
-  <header class="topbar"><div class="mark">RC</div><div class="appname"><strong>RAKUTEN COMBINE</strong><span>EXISTING BRAND · QC BATCH GENERATOR</span></div><div class="version">v2.0.7</div></header>
+  <header class="topbar"><div class="mark">RC</div><div class="appname"><strong>RAKUTEN COMBINE</strong><span>EXISTING BRAND · QC BATCH GENERATOR</span></div><div class="version">v2.0.12</div></header>
   <main>
     <div class="headline"><div class="eyebrow">RAKUTEN COMBINE &middot; EXISTING BRAND ONLY</div><h1>Existing Brand Batch</h1><p id="modeDescription">Batch import from Excel and Rakuten iframe. Every image follows source order; no Line Up / Details classification or size squeezing.</p></div>
     <section class="panel importPanel" aria-label="Import Excel">
@@ -21,7 +21,7 @@
       </div>
       <div class="inputLine"><div class="inputLabel">Selected workbook</div><div id="selectedPath" class="path" title="Current Excel input">No file selected</div></div>
       <div class="actions"><button class="primary" id="testThree" type="button" disabled>Test 3 products</button><button class="outline" id="runFull" type="button" disabled>Generate full batch</button><span class="statusText">Test uses first 3 valid iframe rows. JPEG errors stop a full run after 5 consecutive failures.</span></div>
-      <div class="hint"><span class="dot"></span><span>Auto-save: separate <strong>PASSED</strong> and <strong>ERRORS</strong> JPEG/HTML folders, plus an errors-only Excel with iframe and Single links. Review if JPEG height exceeds 3800px. Original Excel stays unchanged.</span></div>
+      <div class="hint"><span class="dot"></span><span>Auto-save: separate <strong>PASSED</strong> and <strong>ERRORS</strong> JPEG/HTML folders, plus an errors-only Excel with iframe and Single links. Rows with #VALUE!, missing iframe, or no valid Details keep a Single-only JPEG/HTML under ERRORS when the Single is valid. NO IMAGE placeholders stay visible in ERRORS JPEG/HTML (review only); height over 3800px is REVIEW. Original Excel stays unchanged.</span></div>
     </section>
     <section class="panel progressPanel" aria-label="Batch status">
       <div class="panelHeader"><div><span class="step">02</span><h2>Batch progress</h2></div><div class="tools"><span class="statusText">Source order only &middot; exactly 2 columns after Single</span></div></div>
@@ -38,8 +38,8 @@
     </section>
     <section class="rules">
       <div><span class="label">INPUT</span><strong>Single URL / path + iframe</strong><p>Reads your real workbook directly: C = iframe, D = HTML output, E = Yahoo Single image URL. No moving columns. Source images are downloaded temporarily for direct JPEG composition, then discarded. Other supported templates are also scanned.</p></div>
-      <div><span class="label">HTML</span><strong>780px &middot; two-column table</strong><p>Single touches top and both sides; 15px below it, all iframe images follow source order in two fixed columns. Output: ID.html, from the end of the Yahoo Single URL.</p></div>
-      <div><span class="label">JPEG + QUALITY CHECK</span><strong>600px &middot; dynamic height</strong><p>Full-bleed Single, then two 293px columns. The identical full Combine layout is used in PASSED and ERRORS. Broken images are skipped, surviving images reflow into two columns, and oversized output is never cropped. Local Single HTML is preview-only.</p></div>
+      <div><span class="label">HTML</span><strong>780px &middot; two-column table</strong><p>Single touches top and both sides; 15px below it, all iframe images follow source order in two fixed columns. Output: ID.html; Excel date-corrupted IDs are recovered only from matching SKU evidence, otherwise flagged for review.</p></div>
+      <div><span class="label">JPEG + QUALITY CHECK</span><strong>600px &middot; dynamic height</strong><p>Full-bleed Single, then two 293px columns. The identical full Combine layout is used in PASSED and ERRORS. When an iframe is broken (#VALUE!/missing/unavailable), a valid Single is retained as a Single-only review JPEG/HTML in ERRORS. Valid Details always use the normal two-column Combine. Confirmed gray NO IMAGE Singles remain visible in ERRORS JPEG/HTML for QC; almost-white Singles remain excluded and flagged. Excel date-converted SKUs such as MAR-90 are checked for serial-number URL mistakes. Oversized output is never cropped. Local Single HTML is preview-only.</p></div>
     </section>
   </main>
   <footer>Existing Brand only: original iframe image order, full-width Single when supplied, and two fixed gallery columns. Original Excel remains unchanged.</footer>
